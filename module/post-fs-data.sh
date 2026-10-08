@@ -8,9 +8,9 @@ if [ ! -f "$CONFIG" ]; then
 {
   "enabled": true,
   "force_denylist_unmount": true,
-  "hide_lineage_resources": false,
-  "hide_lineage_features": false,
-  "hide_lineage_broadcasts": false,
+  "hide_lineage_resources": true,
+  "hide_lineage_features": true,
+  "hide_lineage_broadcasts": true,
   "targets": []
 }
 EOF

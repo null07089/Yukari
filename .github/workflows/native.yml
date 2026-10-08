@@ -87,23 +87,16 @@ jobs:
           set -euo pipefail
           short_sha="${GITHUB_SHA:0:7}"
           run_number="${GITHUB_RUN_NUMBER}"
-          version_code="${run_number}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
-            # versionCode: major*10000 + minor*100 + patch, e.g. 2.0 -> 20000.
-            IFS='.' read -r v_major v_minor v_patch <<< "${version%%-*}"
-            v_minor="${v_minor:-0}"
-            v_patch="${v_patch:-0}"
-            if [[ "${v_major}" =~ ^[0-9]+$ && "${v_minor}" =~ ^[0-9]+$ && "${v_patch}" =~ ^[0-9]+$ ]]; then
-              version_code=$((10#${v_major} * 10000 + 10#${v_minor} * 100 + 10#${v_patch}))
-            fi
           elif [[ "${GITHUB_REF_NAME}" == "Dev" || "${GITHUB_REF_NAME}" == "dev" ]]; then
             version="2.0-dev (${run_number}-${short_sha})"
           else
             version="2.0 (${run_number}-${short_sha})"
           fi
+          # versionCode is maintained in module.prop so release tags keep the
+          # expected value (v2.0 -> 2) and Magisk update checks stay monotonic.
           sed -i "s/^version=.*/version=${version}/" module/module.prop
-          sed -i "s/^versionCode=.*/versionCode=${version_code}/" module/module.prop
           echo "Ref: ${GITHUB_REF}"
           echo "Version: $(grep '^version=' module/module.prop)"
           echo "Version code: $(grep '^versionCode=' module/module.prop)"
@@ -153,11 +146,31 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Generate update manifest
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep '^version=' module/module.prop | cut -d= -f2-)"
+          version_code="$(grep '^versionCode=' module/module.prop | cut -d= -f2-)"
+          tag="${GITHUB_REF_NAME}"
+          cat > out/update.json <<EOF
+          {
+            "version": "${version}",
+            "versionCode": ${version_code},
+            "zipUrl": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/Yukari.zip",
+            "changelog": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
+          }
+          EOF
+          cat out/update.json
+
       - name: Publish GitHub release for tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/Yukari.zip
+          files: |
+            out/Yukari.zip
+            out/update.json
           generate_release_notes: true
 
       - name: Upload build diagnostics

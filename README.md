@@ -3,9 +3,10 @@
 Yukari is a target-scoped Zygisk module that hides custom-ROM ServiceManager
 signals. Matching is ASCII case-insensitive for `lineage`, `crdroid`, `aospa`,
 `pixelexperience`, `omnirom`, `protonaosp`, plus the exact service name
-`profile`. An opt-in mode additionally hides the `lineageos.platform` resource
-package, the `org.lineageos.*` system features and the LineageOS
-protected-broadcast actions inside target processes.
+`profile`. A default-on stealth mode additionally hides the `lineageos.platform`
+resource package, the `org.lineageos.*` system features and the LineageOS
+protected-broadcast actions inside target processes; each channel can be
+disabled in the configuration.
 
 The preferred implementation hooks `android.os.BinderProxy.transactNative` via
 Zygisk's JNI hook API. ServiceManager enumeration/debug replies are filtered at
@@ -30,8 +31,8 @@ placeholders; the caller's original Parcel and the reply layout remain intact.
 The legacy ioctl fallback still filters enumeration only, without direct
 lookup redirection or Java caller classification.
 
-Beyond ServiceManager, each target process can opt into three additional
-ROM-signal channels (all off by default, all process-local and
+Beyond ServiceManager, each target process also hides three additional
+ROM-signal channels (all enabled by default, all process-local and
 length-preserving):
 
 - **Resource package** — AssetManager name/ID lookups treat `lineageos.platform`
@@ -64,9 +65,9 @@ Device-level startup and detector regression checks remain necessary.
 {
   "enabled": true,
   "force_denylist_unmount": true,
-  "hide_lineage_resources": false,
-  "hide_lineage_features": false,
-  "hide_lineage_broadcasts": false,
+  "hide_lineage_resources": true,
+  "hide_lineage_features": true,
+  "hide_lineage_broadcasts": true,
   "targets": ["com.example.app"]
 }
 ```
@@ -74,15 +75,15 @@ Device-level startup and detector regression checks remain necessary.
 Set `force_denylist_unmount` to `false` on devices where target apps depend
 on Magisk-provided mounts; service filtering remains enabled.
 
-Set `hide_lineage_resources` to `true` to also hide the `lineageos.platform`
-resource package inside target processes. The hook filters AssetManager
-name/ID lookups for resource package id `0x3f` (and `defPackage`
+Set `hide_lineage_resources` to `true` (default) to also hide the
+`lineageos.platform` resource package inside target processes. The hook filters
+AssetManager name/ID lookups for resource package id `0x3f` (and `defPackage`
 `lineageos.platform`), so resource probes behave as on a non-LineageOS build
 without touching PackageManager or the system image. Applications that
-legitimately use Lineage SDK resources lose them in that process, and package
-lists, SDK classes and `/system` files stay visible; leave the flag off unless
-a target specifically probes these resources. The hook needs the Android 9
-(API 28) AssetManager entry points; on older releases the flag is skipped.
+legitimately use Lineage SDK resources lose them in that process; package
+lists, SDK classes and `/system` files stay visible, so set the flag to `false`
+for such targets. The hook needs the Android 9 (API 28) AssetManager entry
+points; on older releases the flag is skipped.
 
 Set `hide_lineage_features` to `true` to hide the LineageOS system features
 `org.lineageos.livedisplay`, `org.lineageos.profiles`, `org.lineageos.hardware`,
@@ -90,16 +91,17 @@ Set `hide_lineage_features` to `true` to hide the LineageOS system features
 `org.lineageos.android` and `org.lineageos.settings` inside target processes.
 `PackageManager.hasSystemFeature()` returns `false` for them and
 `getSystemAvailableFeatures()` reports equal-length underscore placeholders
-instead of the real names; both paths keep the Parcel layout unchanged. Leave
-the flag off for apps that gate their own Lineage integration on these
-features.
+instead of the real names; both paths keep the Parcel layout unchanged. The
+flag defaults to `true`; set it to `false` for apps that gate their own Lineage
+integration on these features.
 
-Set `hide_lineage_broadcasts` to `true` to rewrite the LineageOS
+Set `hide_lineage_broadcasts` to `true` (default) to rewrite the LineageOS
 protected-broadcast actions in outbound `IActivityManager` broadcast requests.
 Sending e.g. `lineageos.intent.action.REFRESH_PREFERENCE` then behaves like on
 AOSP (accepted with no receiver) instead of raising `SecurityException`, which
 would otherwise fingerprint the ROM. The action is replaced by an equal-length
-placeholder in a private request copy, so the app's own Intent is untouched.
+placeholder in a private request copy, so the app's own Intent is untouched;
+set the flag to `false` for targets that rely on sending these actions.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -119,6 +121,11 @@ Install Gradle 8.11.1, JDK 17 and the Android SDK/NDK locally. The repository's
 ./gradlew :module:assembleRelease
 bash scripts/package.sh
 ```
+
+`v*` tags are published through the GitHub Actions workflow together with an
+`update.json` manifest; `module.prop` points `updateJson` at
+`releases/latest/download/update.json`, so Magisk offers module updates from
+the repository's releases.
 
 ## Verification
 

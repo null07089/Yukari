@@ -3,8 +3,8 @@
 Yukari 是一个按目标应用生效的 Zygisk 模块，用于隐藏自定义 ROM 的
 ServiceManager 服务信号。固定匹配关键字为 `lineage`、`crdroid`、`aospa`、
 `pixelexperience`、`omnirom`、`protonaosp`，并精确匹配 `profile`。
-可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包、
-`org.lineageos.*` 系统 feature 以及 Lineage 受保护广播 Action（见下文配置）。
+默认还会在目标进程内隐藏 `lineageos.platform` 资源包、
+`org.lineageos.*` 系统 feature 以及 Lineage 受保护广播 Action（均可在配置中关闭）。
 
 ## 实现策略
 
@@ -34,9 +34,9 @@ GOT 槽直接指向模块 `.text`。
 受信任框架/Lineage API 间接获取服务仍可能绕过当前边界。前缀保护是启动兼容策略，
 不是强制安全边界；不能承诺任何检测方式均不可见。
 
-### 追加 ROM 信号通道（可选）
+### 追加 ROM 信号通道
 
-除 ServiceManager 外，目标进程还可按需启用三条独立通道，全部只作用于目标进程、
+除 ServiceManager 外，目标进程默认启用三条独立通道，全部只作用于目标进程、
 只做等长改写、不修改系统镜像：
 
 | 通道 | 钩子位置 | 效果 | 已知边界 |
@@ -46,7 +46,7 @@ GOT 槽直接指向模块 `.text`。
 | 受保护广播 | 复制 `IActivityManager` 广播请求并等长替换 10 个 lineage Action | 发送不再抛 `SecurityException`，等同 AOSP 静默成功 | `PendingIntent` 代发路径不经过应用事务，不在覆盖内 |
 
 **更新模块后必须重启设备**：zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
-新旧页混用并导致 zygote 崩溃。三条通道默认关闭，阈值和风险见下节配置说明。
+新旧页混用并导致 zygote 崩溃。三条通道默认开启，可按目标关闭，风险见下节配置说明。
 
 ## 可观察特征取舍
 
@@ -70,9 +70,9 @@ GOT 槽直接指向模块 `.text`。
 {
   "enabled": true,
   "force_denylist_unmount": true,
-  "hide_lineage_resources": false,
-  "hide_lineage_features": false,
-  "hide_lineage_broadcasts": false,
+  "hide_lineage_resources": true,
+  "hide_lineage_features": true,
+  "hide_lineage_broadcasts": true,
   "targets": ["com.example.app"]
 }
 ```
@@ -86,8 +86,9 @@ GOT 槽直接指向模块 `.text`。
 `lineageos.platform`）的 AssetManager 名称/ID 查询返回“不存在”，效果等同于
 非 LineageOS 设备。该实现不改写 PackageManager，也不修改系统镜像；真正使用
 Lineage SDK 资源的目标应用会失去这些资源，而包列表、SDK 类和 `/system`
-文件仍然可见。除确有该类探测需求的目标外建议保持关闭。该隐藏依赖 Android 9
-（API 28）起的 AssetManager 方法签名；旧系统上开关会被跳过，资源视图保持原样。
+文件仍然可见。默认为 `true`；如目标应用确实依赖 Lineage SDK 资源，可在该应用上
+设为 `false`。该隐藏依赖 Android 9（API 28）起的 AssetManager 方法签名；旧系统上
+开关会被跳过，资源视图保持原样。
 
 `hide_lineage_features` 设为 `true` 时，还会在目标进程内隐藏这 8 个 LineageOS
 系统 feature：`org.lineageos.livedisplay`、`org.lineageos.profiles`、
@@ -95,15 +96,16 @@ Lineage SDK 资源的目标应用会失去这些资源，而包列表、SDK 类�
 `org.lineageos.health`、`org.lineageos.android`、`org.lineageos.settings`。
 `PackageManager.hasSystemFeature()` 对它们返回 `false`（该 API 本身返回
 boolean，不存在 null）；`getSystemAvailableFeatures()` 中的名称会被替换为等长
-下划线占位符，Parcel 布局保持不变。依赖这些 feature 决定自身 Lineage 集成的
-目标应用应保持关闭。
+下划线占位符，Parcel 布局保持不变。默认为 `true`；依赖这些 feature 决定自身
+Lineage 集成的目标应用应设为 `false`。
 
 `hide_lineage_broadcasts` 设为 `true` 时，会改写目标应用发往 `IActivityManager`
 的广播请求中的 Lineage 受保护广播 Action（如
 `lineageos.intent.action.REFRESH_PREFERENCE`、`lineageos.platform.intent.action.PROFILE_SELECTED`
 等 10 个）。效果：在 LineageOS 上发送这些 Action 不再抛 `SecurityException`，
 而是像 AOSP 一样静默成功（无接收者）；Action 在私有请求副本里被等长占位符替换，
-应用自身的 Intent 不受影响。依赖这些广播探测 ROM 的场景应开启。
+应用自身的 Intent 不受影响。默认为 `true`；如有目标依赖发送这些 Action，可设为
+`false`。
 
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
@@ -131,6 +133,10 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    ./gradlew :module:assembleRelease
    bash scripts/package.sh
    ```
+
+   tag `v*` 发布时 CI 同时生成 `update.json`（`version`/`versionCode`/`zipUrl`/
+   `changelog`）；`module.prop` 的 `updateJson` 指向
+   `releases/latest/download/update.json`，Magisk 会按 `versionCode` 提示模块更新。
 
 2. **ELF 符号检查**（设备或 CI 主机）
 
