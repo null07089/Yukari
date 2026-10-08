@@ -4,7 +4,7 @@ Yukari is a target-scoped Zygisk module that hides custom-ROM ServiceManager
 signals. Matching is ASCII case-insensitive for `lineage`, `crdroid`, `aospa`,
 `pixelexperience`, `omnirom`, `protonaosp`, plus the exact service name
 `profile`. An opt-in mode additionally hides the `lineageos.platform` resource
-package inside target processes.
+package and the `org.lineageos.*` system features inside target processes.
 
 The preferred implementation hooks `android.os.BinderProxy.transactNative` via
 Zygisk's JNI hook API. ServiceManager enumeration/debug replies are filtered at
@@ -48,6 +48,7 @@ Device-level startup and detector regression checks remain necessary.
   "enabled": true,
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
+  "hide_lineage_features": false,
   "targets": ["com.example.app"]
 }
 ```
@@ -64,6 +65,16 @@ legitimately use Lineage SDK resources lose them in that process, and package
 lists, SDK classes and `/system` files stay visible; leave the flag off unless
 a target specifically probes these resources. The hook needs the Android 9
 (API 28) AssetManager entry points; on older releases the flag is skipped.
+
+Set `hide_lineage_features` to `true` to hide the LineageOS system features
+`org.lineageos.livedisplay`, `org.lineageos.profiles`, `org.lineageos.hardware`,
+`org.lineageos.globalactions`, `org.lineageos.trust`, `org.lineageos.health`,
+`org.lineageos.android` and `org.lineageos.settings` inside target processes.
+`PackageManager.hasSystemFeature()` returns `false` for them and
+`getSystemAvailableFeatures()` reports equal-length underscore placeholders
+instead of the real names; both paths keep the Parcel layout unchanged. Leave
+the flag off for apps that gate their own Lineage integration on these
+features.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -94,3 +105,8 @@ package itself stays listed and SDK classes remain loadable. A non-target app
 on the same device must still read `true`/`6500`, confirming the hook is
 process-local. Regression-test the target's own features for unexpected
 resource failures.
+
+With `hide_lineage_features` enabled,
+`getPackageManager().hasSystemFeature("org.lineageos.livedisplay")` must return
+`false` in a target process and `getSystemAvailableFeatures()` must not expose
+the real `org.lineageos.*` names; a non-target app must still see them.

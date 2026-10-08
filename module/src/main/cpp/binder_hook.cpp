@@ -1,4 +1,5 @@
 #include "binder_hook.h"
+#include "feature_match.h"
 #include "logger.h"
 #include "service_cache.h"
 #include "service_match.h"
@@ -45,6 +46,7 @@ TransactNativeFn g_original_transact_native = nullptr;
 bool g_jni_hook_installed = false;
 
 constexpr const char *kIServiceManagerDescriptor = "android.os.IServiceManager";
+constexpr const char *kIPackageManagerDescriptor = "android.content.pm.IPackageManager";
 
 constexpr jint kSvcListServices = 4;
 
@@ -59,6 +61,16 @@ struct ServiceTransactions {
 
 ServiceTransactions g_service_transactions;
 
+// Feature hiding is opt-in per target process; when disabled the
+// IPackageManager descriptor scan and reply scrubbing are skipped entirely.
+struct PackageTransactions {
+    jint has_system_feature = 0;
+    jint get_system_available_features = 0;
+};
+
+PackageTransactions g_package_transactions;
+std::atomic<bool> g_feature_filtering{false};
+
 // Binder command buffers are bounded by the kernel's transaction limit.  Keep
 // a conservative userspace ceiling before doing pointer arithmetic on data
 // supplied by the driver.
@@ -71,6 +83,8 @@ struct ParcelMethods {
     jmethodID set_data_position = nullptr;
     jmethodID read_string = nullptr;
     jmethodID write_string = nullptr;
+    jmethodID read_string8 = nullptr;
+    jmethodID write_string8 = nullptr;
     jmethodID read_int = nullptr;
     jmethodID obtain = nullptr;
     jmethodID append_from = nullptr;
@@ -218,6 +232,21 @@ bool is_lookup_transaction(jint code) {
                        code == g_service_transactions.check_service2);
 }
 
+jint read_transaction_field(JNIEnv *env, jclass stub, const char *name) {
+    if (!env || !stub || !name) return 0;
+    const jfieldID field = env->GetStaticFieldID(stub, name, "I");
+    if (!field || env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return 0;
+    }
+    const jint value = env->GetStaticIntField(stub, field);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return 0;
+    }
+    return value > 0 ? value : 0;
+}
+
 void init_service_transactions(JNIEnv *env) {
     const jint sdk = sdk_int(env);
     ServiceTransactions transactions;
@@ -229,33 +258,37 @@ void init_service_transactions(JNIEnv *env) {
 
     jclass stub = env ? env->FindClass("android/os/IServiceManager$Stub") : nullptr;
     if (stub) {
-        const auto transaction = [&](const char *name) -> jint {
-            const jfieldID field = env->GetStaticFieldID(stub, name, "I");
-            if (!field || env->ExceptionCheck()) {
-                clear_jni_exception(env);
-                return 0;
-            }
-            const jint value = env->GetStaticIntField(stub, field);
-            if (env->ExceptionCheck()) {
-                clear_jni_exception(env);
-                return 0;
-            }
-            return value > 0 ? value : 0;
-        };
-        transactions.get_service = transaction("TRANSACTION_getService");
-        transactions.check_service = transaction("TRANSACTION_checkService");
-        transactions.get_service2 = transaction("TRANSACTION_getService2");
-        transactions.check_service2 = transaction("TRANSACTION_checkService2");
-        transactions.list_services = transaction("TRANSACTION_listServices");
-        transactions.debug_info = transaction("TRANSACTION_getServiceDebugInfo");
+        transactions.get_service = read_transaction_field(env, stub, "TRANSACTION_getService");
+        transactions.check_service = read_transaction_field(env, stub, "TRANSACTION_checkService");
+        transactions.get_service2 = read_transaction_field(env, stub, "TRANSACTION_getService2");
+        transactions.check_service2 = read_transaction_field(env, stub, "TRANSACTION_checkService2");
+        transactions.list_services = read_transaction_field(env, stub, "TRANSACTION_listServices");
+        transactions.debug_info = read_transaction_field(env, stub, "TRANSACTION_getServiceDebugInfo");
         env->DeleteLocalRef(stub);
     } else {
         clear_jni_exception(env);
     }
     g_service_transactions = transactions;
-    log_info("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d",
+
+    jclass package_stub = env ? env->FindClass("android/content/pm/IPackageManager$Stub") : nullptr;
+    if (package_stub) {
+        PackageTransactions packages;
+        packages.has_system_feature =
+            read_transaction_field(env, package_stub, "TRANSACTION_hasSystemFeature");
+        packages.get_system_available_features =
+            read_transaction_field(env, package_stub, "TRANSACTION_getSystemAvailableFeatures");
+        env->DeleteLocalRef(package_stub);
+        g_package_transactions = packages;
+    } else {
+        clear_jni_exception(env);
+    }
+
+    log_info("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d; "
+             "PM hasFeature=%d features=%d",
              transactions.get_service, transactions.check_service, transactions.get_service2,
-             transactions.check_service2, transactions.list_services, transactions.debug_info);
+             transactions.check_service2, transactions.list_services, transactions.debug_info,
+             g_package_transactions.has_system_feature,
+             g_package_transactions.get_system_available_features);
 }
 
 bool init_parcel_methods(JNIEnv *env) {
@@ -301,6 +334,22 @@ bool init_parcel_methods(JNIEnv *env) {
         env->DeleteGlobalRef(methods.cls);
         pthread_mutex_unlock(&g_parcel_mutex);
         return false;
+    }
+
+    // FeatureInfo migrated from writeString (UTF-16) to writeString8 (UTF-8);
+    // both accessors are optional so older releases still get the UTF-16 path.
+    methods.read_string8 = find_method("readString8", "()Ljava/lang/String;");
+    if (env->ExceptionCheck() || !methods.read_string8) {
+        clear_jni_exception(env);
+        methods.read_string8 = nullptr;
+    }
+    if (methods.read_string8) {
+        methods.write_string8 = find_method("writeString8", "(Ljava/lang/String;)V");
+    }
+    if (env->ExceptionCheck() || !methods.write_string8) {
+        clear_jni_exception(env);
+        methods.read_string8 = nullptr;
+        methods.write_string8 = nullptr;
     }
 
     methods.obtain = env->GetStaticMethodID(methods.cls, "obtain", "()Landroid/os/Parcel;");
@@ -354,8 +403,8 @@ jstring replacement_for(JNIEnv *env, jstring value) {
     }
 }
 
-jint service_manager_name_position(JNIEnv *env, jobject parcel) {
-    if (!env || !parcel) return -1;
+jint interface_name_position(JNIEnv *env, jobject parcel, const char *descriptor) {
+    if (!env || !parcel || !descriptor) return -1;
     const jint original_position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
     if (env->ExceptionCheck() || original_position < 0) {
         clear_jni_exception(env);
@@ -370,10 +419,10 @@ jint service_manager_name_position(JNIEnv *env, jobject parcel) {
     // across releases: one int (O/P), two ints (Q), three ints (R), and four
     // ints on newer builds.  RPC parcels have no header and use offset zero.
     constexpr jint kCandidateOffsets[] = {0, 4, 8, 12, 16};
-    constexpr jint kDescriptorLength = sizeof("android.os.IServiceManager") - 1;
-    constexpr jint kDescriptorBytes = 4 + ((2 * (kDescriptorLength + 1) + 3) & ~3);
+    const jint descriptor_length = static_cast<jint>(std::strlen(descriptor));
+    const jint descriptor_bytes = 4 + ((2 * (descriptor_length + 1) + 3) & ~3);
     for (jint offset : kCandidateOffsets) {
-        if (offset > size - kDescriptorBytes) continue;
+        if (offset > size - descriptor_bytes) continue;
         env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, offset);
         if (env->ExceptionCheck()) {
             clear_jni_exception(env);
@@ -384,25 +433,25 @@ jint service_manager_name_position(JNIEnv *env, jobject parcel) {
             clear_jni_exception(env);
             continue;
         }
-        if (length != kDescriptorLength) continue;
+        if (length != descriptor_length) continue;
         env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, offset);
         if (env->ExceptionCheck()) {
             clear_jni_exception(env);
             break;
         }
-        jstring descriptor = static_cast<jstring>(env->CallObjectMethod(parcel, g_parcel_methods.read_string));
+        jstring token = static_cast<jstring>(env->CallObjectMethod(parcel, g_parcel_methods.read_string));
         if (env->ExceptionCheck()) {
-            if (descriptor) env->DeleteLocalRef(descriptor);
+            if (token) env->DeleteLocalRef(token);
             clear_jni_exception(env);
             continue;
         }
-        const std::string value = jstring_ascii(env, descriptor);
-        if (descriptor) env->DeleteLocalRef(descriptor);
+        const std::string value = jstring_ascii(env, token);
+        if (token) env->DeleteLocalRef(token);
         if (env->ExceptionCheck()) {
             clear_jni_exception(env);
             break;
         }
-        if (value == kIServiceManagerDescriptor) {
+        if (value == descriptor) {
             const jint name_position = env->CallIntMethod(parcel, g_parcel_methods.data_position);
             const bool valid = !env->ExceptionCheck() && name_position >= 0 && name_position <= size;
             clear_jni_exception(env);
@@ -539,7 +588,14 @@ void recycle_request(JNIEnv *env, jobject parcel) {
     }
 }
 
-jobject filtered_lookup_request(JNIEnv *env, jobject parcel, jint name_position) {
+using NamePredicate = bool (*)(const std::string &);
+
+// Builds a length-preserving copy of the request Parcel with the name at
+// name_position replaced by underscores when the predicate matches.  Service
+// lookups additionally require an application caller so framework/Lineage
+// initialization keeps the real service; package feature requests do not.
+jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
+                              NamePredicate hide, bool require_app_caller) {
     if (!g_parcel_methods.obtain || !g_parcel_methods.append_from || !g_parcel_methods.recycle ||
         env->ExceptionCheck()) return nullptr;
     if (env->PushLocalFrame(8) < 0) {
@@ -563,7 +619,8 @@ jobject filtered_lookup_request(JNIEnv *env, jobject parcel, jint name_position)
     if (original_position >= 0) env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, original_position);
     const std::string service = valid && !env->ExceptionCheck() ? jstring_ascii(env, name) : std::string();
     jobject copy = nullptr;
-    if (!env->ExceptionCheck() && !service.empty() && hide_service(service) && is_app_service_caller(env)) {
+    if (!env->ExceptionCheck() && !service.empty() && hide(service) &&
+        (!require_app_caller || is_app_service_caller(env))) {
         jstring replacement = replacement_for(env, name);
         if (replacement && !env->ExceptionCheck()) {
             copy = env->CallStaticObjectMethod(g_parcel_methods.cls, g_parcel_methods.obtain);
@@ -690,6 +747,90 @@ void filter_debug_info_reply(JNIEnv *env, jobject parcel) {
         if (env->ExceptionCheck()) break;
     }
     reset_reply_position(env, parcel);
+}
+
+// Shortest and longest entries in feature_match.cpp:
+// "org.lineageos.trust" (19) .. "org.lineageos.globalactions" (27).
+constexpr jint kMinFeatureNameLength = 19;
+constexpr jint kMaxFeatureNameLength = 27;
+
+// Reads a Parcel string at position and rewrites it with an equal-length
+// placeholder when it matches a hidden feature.  read/write are the matching
+// UTF-16 or UTF-8 accessors.
+bool scrub_feature_string_at(JNIEnv *env, jobject parcel, jint position, jmethodID read,
+                             jmethodID write) {
+    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return false;
+    }
+    auto value = static_cast<jstring>(env->CallObjectMethod(parcel, read));
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        if (value) env->DeleteLocalRef(value);
+        return false;
+    }
+    if (!value) return false;
+    const std::string name = jstring_ascii(env, value);
+    jstring replacement = !name.empty() && hide_feature(name) ? replacement_for(env, value) : nullptr;
+    env->DeleteLocalRef(value);
+    if (!replacement || env->ExceptionCheck()) {
+        if (replacement) env->DeleteLocalRef(replacement);
+        clear_jni_exception(env);
+        return false;
+    }
+    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
+    if (!env->ExceptionCheck()) {
+        env->CallVoidMethod(parcel, write, replacement);
+    }
+    env->DeleteLocalRef(replacement);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return false;
+    }
+    return true;
+}
+
+// getSystemAvailableFeatures returns a ParceledListSlice<FeatureInfo> whose
+// layout changed across releases.  Instead of parsing the container, walk the
+// reply at 4-byte alignment: every FeatureInfo name is a length-prefixed
+// Parcel string, and overwriting it with underscores keeps the byte length and
+// therefore the parcel layout intact.  Lists larger than the Binder IPC size
+// are continued through a retriever Binder; real feature lists stay far below
+// that limit.
+void scrub_feature_reply(JNIEnv *env, jobject parcel) {
+    if (!reset_reply_position(env, parcel)) return;
+    const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
+    if (env->ExceptionCheck() || size < 8 || size > MAX_REPLY_BUF) {
+        reset_reply_position(env, parcel);
+        return;
+    }
+    int hits = 0;
+    for (jint position = 0; position <= size - 4; position += 4) {
+        env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            break;
+        }
+        const jint length = env->CallIntMethod(parcel, g_parcel_methods.read_int);
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            continue;
+        }
+        if (length < kMinFeatureNameLength || length > kMaxFeatureNameLength) continue;
+        if (scrub_feature_string_at(env, parcel, position, g_parcel_methods.read_string,
+                                    g_parcel_methods.write_string)) {
+            ++hits;
+            continue;
+        }
+        if (g_parcel_methods.read_string8 &&
+            scrub_feature_string_at(env, parcel, position, g_parcel_methods.read_string8,
+                                    g_parcel_methods.write_string8)) {
+            ++hits;
+        }
+    }
+    reset_reply_position(env, parcel);
+    if (hits > 0) log_info("scrubbed %d lineage feature name(s) in PM reply", hits);
 }
 
 jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data_obj, jobject reply_obj,
@@ -960,27 +1101,45 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
     const bool is_list = is_list_transaction(env, code);
     const bool is_debug = is_debug_transaction(env, code);
     const bool is_lookup = is_lookup_transaction(code) && (flags & TF_ONE_WAY) == 0;
+    const bool feature_filtering = g_feature_filtering.load(std::memory_order_acquire);
+    const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
+                                code == g_package_transactions.has_system_feature &&
+                                (flags & TF_ONE_WAY) == 0;
+    const bool is_feature_list = feature_filtering &&
+                                 g_package_transactions.get_system_available_features > 0 &&
+                                 code == g_package_transactions.get_system_available_features;
     jint name_position = -1;
-    if ((is_list || is_debug || is_lookup) && data_obj != nullptr && init_parcel_methods(env)) {
-        name_position = service_manager_name_position(env, data_obj);
+    if ((is_list || is_debug || is_lookup || is_has_feature || is_feature_list) && data_obj != nullptr &&
+        init_parcel_methods(env)) {
+        name_position = (is_has_feature || is_feature_list)
+                            ? interface_name_position(env, data_obj, kIPackageManagerDescriptor)
+                            : interface_name_position(env, data_obj, kIServiceManagerDescriptor);
+    }
+    const bool descriptor_ready = name_position >= 0;
+
+    jobject filtered_request = nullptr;
+    if (descriptor_ready && is_lookup) {
+        filtered_request = filtered_name_request(env, data_obj, name_position, hide_service, true);
+    } else if (descriptor_ready && is_has_feature) {
+        filtered_request = filtered_name_request(env, data_obj, name_position, hide_feature, false);
     }
 
-    jobject filtered_request = is_lookup && name_position >= 0
-                                   ? filtered_lookup_request(env, data_obj, name_position) : nullptr;
     const jboolean result = g_original_transact_native(env, thiz, code,
                                                       filtered_request ? filtered_request : data_obj, reply_obj, flags);
     if (filtered_request) recycle_request(env, filtered_request);
     // Never swallow an exception raised by the real Binder implementation;
     // callers rely on RemoteException propagation semantics.
-    if (result == JNI_FALSE || name_position < 0 || reply_obj == nullptr || env->ExceptionCheck()) {
+    if (result == JNI_FALSE || reply_obj == nullptr || env->ExceptionCheck()) {
         return result;
     }
 
     if (!init_parcel_methods(env)) return result;
-    if (is_list) {
+    if (is_list && descriptor_ready) {
         filter_list_reply(env, reply_obj);
-    } else if (is_debug) {
+    } else if (is_debug && descriptor_ready) {
         filter_debug_info_reply(env, reply_obj);
+    } else if (is_feature_list && descriptor_ready) {
+        scrub_feature_reply(env, reply_obj);
     }
     clear_jni_exception(env);
     return result;
@@ -1084,6 +1243,10 @@ std::vector<ElfMappingId> find_mappings() {
     return mappings;
 }
 } // namespace
+
+void set_feature_filtering(bool enabled) {
+    g_feature_filtering.store(enabled, std::memory_order_release);
+}
 
 bool install_jni_hook(JNIEnv *env, zygisk::Api *api) {
     init_service_transactions(env);

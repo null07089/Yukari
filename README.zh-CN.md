@@ -3,7 +3,8 @@
 Yukari 是一个按目标应用生效的 Zygisk 模块，用于隐藏自定义 ROM 的
 ServiceManager 服务信号。固定匹配关键字为 `lineage`、`crdroid`、`aospa`、
 `pixelexperience`、`omnirom`、`protonaosp`，并精确匹配 `profile`。
-可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包（见下文配置）。
+可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包和
+`org.lineageos.*` 系统 feature（见下文配置）。
 
 ## 实现策略
 
@@ -56,6 +57,7 @@ GOT 槽直接指向模块 `.text`。
   "enabled": true,
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
+  "hide_lineage_features": false,
   "targets": ["com.example.app"]
 }
 ```
@@ -71,6 +73,15 @@ GOT 槽直接指向模块 `.text`。
 Lineage SDK 资源的目标应用会失去这些资源，而包列表、SDK 类和 `/system`
 文件仍然可见。除确有该类探测需求的目标外建议保持关闭。该隐藏依赖 Android 9
 （API 28）起的 AssetManager 方法签名；旧系统上开关会被跳过，资源视图保持原样。
+
+`hide_lineage_features` 设为 `true` 时，还会在目标进程内隐藏这 8 个 LineageOS
+系统 feature：`org.lineageos.livedisplay`、`org.lineageos.profiles`、
+`org.lineageos.hardware`、`org.lineageos.globalactions`、`org.lineageos.trust`、
+`org.lineageos.health`、`org.lineageos.android`、`org.lineageos.settings`。
+`PackageManager.hasSystemFeature()` 对它们返回 `false`（该 API 本身返回
+boolean，不存在 null）；`getSystemAvailableFeatures()` 中的名称会被替换为等长
+下划线占位符，Parcel 布局保持不变。依赖这些 feature 决定自身 Lineage 集成的
+目标应用应保持关闭。
 
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
@@ -138,3 +149,9 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    对应 `getBoolean`/`getInteger` 抛出 `NotFoundException`；包列表和 SDK 类不受影响。
    同一设备上的非目标对照应用仍应读到 `true`/`6500`，确认隐藏只在目标进程生效。
    同时回归目标应用的核心功能，确认没有资源异常或崩溃。
+
+7. **Feature 隐藏验证**（`hide_lineage_features: true`）
+
+   目标应用内 `getPackageManager().hasSystemFeature("org.lineageos.livedisplay")`
+   应返回 `false`，`getSystemAvailableFeatures()` 不应再出现真实的
+   `org.lineageos.*` 名称；非目标对照应用仍应返回 `true` 并列出这些 feature。

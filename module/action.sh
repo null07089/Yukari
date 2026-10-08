@@ -19,10 +19,12 @@ fi
 ENABLED="true"
 ENHANCED="false"
 HIDE_LINEAGE_RESOURCES="false"
+HIDE_LINEAGE_FEATURES="false"
 if [ -f "$CONFIG" ]; then
     grep -q '"enabled"[[:space:]]*:[[:space:]]*false' "$CONFIG" && ENABLED="false"
     grep -q '"force_denylist_unmount"[[:space:]]*:[[:space:]]*true' "$CONFIG" && ENHANCED="true"
     grep -q '"hide_lineage_resources"[[:space:]]*:[[:space:]]*true' "$CONFIG" && HIDE_LINEAGE_RESOURCES="true"
+    grep -q '"hide_lineage_features"[[:space:]]*:[[:space:]]*true' "$CONFIG" && HIDE_LINEAGE_FEATURES="true"
 fi
 
 CURRENT_USER="$(am get-current-user 2>/dev/null)"
@@ -39,6 +41,7 @@ PACKAGE_COUNT="$(wc -l < "$PACKAGE_LIST" | tr -d ' ')"
     echo "  \"enabled\": $ENABLED,"
     echo "  \"force_denylist_unmount\": $ENHANCED,"
     echo "  \"hide_lineage_resources\": $HIDE_LINEAGE_RESOURCES,"
+    echo "  \"hide_lineage_features\": $HIDE_LINEAGE_FEATURES,"
     echo "  \"targets\": ["
 
     INDEX=0
@@ -64,6 +67,7 @@ echo "Yukari config updated."
 echo "  enabled: $ENABLED"
 echo "  force_denylist_unmount: $ENHANCED"
 echo "  hide_lineage_resources: $HIDE_LINEAGE_RESOURCES"
+echo "  hide_lineage_features: $HIDE_LINEAGE_FEATURES"
 echo "  user: $CURRENT_USER"
 echo "  targets: $PACKAGE_COUNT app(s)"
 echo "  path: $CONFIG"

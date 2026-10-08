@@ -2,5 +2,6 @@
   "enabled": true,
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
+  "hide_lineage_features": false,
   "targets": []
 }

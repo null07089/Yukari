@@ -12,6 +12,9 @@ struct YukariConfig {
     // filtering AssetManager lookups.  Off by default because applications that
     // legitimately consume the Lineage SDK resources lose them.
     bool hide_lineage_resources = false;
+    // Hide the LineageOS system features (org.lineageos.*) from
+    // PackageManager.hasSystemFeature and getSystemAvailableFeatures.
+    bool hide_lineage_features = false;
     std::vector<std::string> targets;
 };
 
