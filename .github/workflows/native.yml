@@ -83,15 +83,23 @@ jobs:
           set -euo pipefail
           short_sha="${GITHUB_SHA:0:7}"
           run_number="${GITHUB_RUN_NUMBER}"
+          version_code="${run_number}"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
+            # versionCode: major*10000 + minor*100 + patch, e.g. 2.0 -> 20000.
+            IFS='.' read -r v_major v_minor v_patch <<< "${version%%-*}"
+            v_minor="${v_minor:-0}"
+            v_patch="${v_patch:-0}"
+            if [[ "${v_major}" =~ ^[0-9]+$ && "${v_minor}" =~ ^[0-9]+$ && "${v_patch}" =~ ^[0-9]+$ ]]; then
+              version_code=$((10#${v_major} * 10000 + 10#${v_minor} * 100 + 10#${v_patch}))
+            fi
           elif [[ "${GITHUB_REF_NAME}" == "Dev" || "${GITHUB_REF_NAME}" == "dev" ]]; then
-            version="1.0.0-dev (${run_number}-${short_sha})"
+            version="2.0-dev (${run_number}-${short_sha})"
           else
-            version="1.0.0 (${run_number}-${short_sha})"
+            version="2.0 (${run_number}-${short_sha})"
           fi
           sed -i "s/^version=.*/version=${version}/" module/module.prop
-          sed -i "s/^versionCode=.*/versionCode=${run_number}/" module/module.prop
+          sed -i "s/^versionCode=.*/versionCode=${version_code}/" module/module.prop
           echo "Ref: ${GITHUB_REF}"
           echo "Version: $(grep '^version=' module/module.prop)"
           echo "Version code: $(grep '^versionCode=' module/module.prop)"
