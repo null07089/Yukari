@@ -4,7 +4,8 @@ Yukari is a target-scoped Zygisk module that hides custom-ROM ServiceManager
 signals. Matching is ASCII case-insensitive for `lineage`, `crdroid`, `aospa`,
 `pixelexperience`, `omnirom`, `protonaosp`, plus the exact service name
 `profile`. An opt-in mode additionally hides the `lineageos.platform` resource
-package and the `org.lineageos.*` system features inside target processes.
+package, the `org.lineageos.*` system features and the LineageOS
+protected-broadcast actions inside target processes.
 
 The preferred implementation hooks `android.os.BinderProxy.transactNative` via
 Zygisk's JNI hook API. ServiceManager enumeration/debug replies are filtered at
@@ -49,6 +50,7 @@ Device-level startup and detector regression checks remain necessary.
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
   "hide_lineage_features": false,
+  "hide_lineage_broadcasts": false,
   "targets": ["com.example.app"]
 }
 ```
@@ -75,6 +77,13 @@ Set `hide_lineage_features` to `true` to hide the LineageOS system features
 instead of the real names; both paths keep the Parcel layout unchanged. Leave
 the flag off for apps that gate their own Lineage integration on these
 features.
+
+Set `hide_lineage_broadcasts` to `true` to rewrite the LineageOS
+protected-broadcast actions in outbound `IActivityManager` broadcast requests.
+Sending e.g. `lineageos.intent.action.REFRESH_PREFERENCE` then behaves like on
+AOSP (accepted with no receiver) instead of raising `SecurityException`, which
+would otherwise fingerprint the ROM. The action is replaced by an equal-length
+placeholder in a private request copy, so the app's own Intent is untouched.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -110,3 +119,9 @@ With `hide_lineage_features` enabled,
 `getPackageManager().hasSystemFeature("org.lineageos.livedisplay")` must return
 `false` in a target process and `getSystemAvailableFeatures()` must not expose
 the real `org.lineageos.*` names; a non-target app must still see them.
+
+With `hide_lineage_broadcasts` enabled, sending
+`lineageos.intent.action.REFRESH_PREFERENCE` from a target process must succeed
+silently instead of raising `SecurityException`, and the module log shows
+`scrubbed N lineage broadcast action(s)`; a non-target app must still be
+rejected.

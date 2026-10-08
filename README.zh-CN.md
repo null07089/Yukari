@@ -3,8 +3,8 @@
 Yukari 是一个按目标应用生效的 Zygisk 模块，用于隐藏自定义 ROM 的
 ServiceManager 服务信号。固定匹配关键字为 `lineage`、`crdroid`、`aospa`、
 `pixelexperience`、`omnirom`、`protonaosp`，并精确匹配 `profile`。
-可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包和
-`org.lineageos.*` 系统 feature（见下文配置）。
+可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包、
+`org.lineageos.*` 系统 feature 以及 Lineage 受保护广播 Action（见下文配置）。
 
 ## 实现策略
 
@@ -58,6 +58,7 @@ GOT 槽直接指向模块 `.text`。
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
   "hide_lineage_features": false,
+  "hide_lineage_broadcasts": false,
   "targets": ["com.example.app"]
 }
 ```
@@ -82,6 +83,13 @@ Lineage SDK 资源的目标应用会失去这些资源，而包列表、SDK 类�
 boolean，不存在 null）；`getSystemAvailableFeatures()` 中的名称会被替换为等长
 下划线占位符，Parcel 布局保持不变。依赖这些 feature 决定自身 Lineage 集成的
 目标应用应保持关闭。
+
+`hide_lineage_broadcasts` 设为 `true` 时，会改写目标应用发往 `IActivityManager`
+的广播请求中的 Lineage 受保护广播 Action（如
+`lineageos.intent.action.REFRESH_PREFERENCE`、`lineageos.platform.intent.action.PROFILE_SELECTED`
+等 10 个）。效果：在 LineageOS 上发送这些 Action 不再抛 `SecurityException`，
+而是像 AOSP 一样静默成功（无接收者）；Action 在私有请求副本里被等长占位符替换，
+应用自身的 Intent 不受影响。依赖这些广播探测 ROM 的场景应开启。
 
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
@@ -155,3 +163,9 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    目标应用内 `getPackageManager().hasSystemFeature("org.lineageos.livedisplay")`
    应返回 `false`，`getSystemAvailableFeatures()` 不应再出现真实的
    `org.lineageos.*` 名称；非目标对照应用仍应返回 `true` 并列出这些 feature。
+
+8. **广播隐藏验证**（`hide_lineage_broadcasts: true`）
+
+   目标应用内 `sendBroadcast(new Intent("lineageos.intent.action.REFRESH_PREFERENCE"))`
+   不应抛 `SecurityException`，logcat 出现 `scrubbed N lineage broadcast action(s)`；
+   非目标对照应用发送同一 Action 仍应被系统拒绝。

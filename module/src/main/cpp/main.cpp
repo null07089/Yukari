@@ -84,6 +84,7 @@ public:
             api_->setOption(zygisk::Option::FORCE_DENYLIST_UNMOUNT);
         }
         set_feature_filtering(g_config->hide_lineage_features);
+        set_broadcast_filtering(g_config->hide_lineage_broadcasts);
         // The Zygisk API is guaranteed to be live in preAppSpecialize.  Hook
         // the boot-class native method here, before post-specialization API
         // calls become implementation-defined.

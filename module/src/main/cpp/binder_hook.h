@@ -9,6 +9,11 @@
 // BinderProxy hook; it only affects the current process.
 void set_feature_filtering(bool enabled);
 
+// Opt-in filtering of LineageOS protected-broadcast actions in outbound
+// IActivityManager broadcast requests.  Call before installing the
+// BinderProxy hook; it only affects the current process.
+void set_broadcast_filtering(bool enabled);
+
 // Installs the preferred BinderProxy.transactNative hook. This path receives
 // the framework-owned Java Parcel objects directly, does not take native
 // ownership, and leaves libbinder's PLT/GOT relocation tables untouched. It

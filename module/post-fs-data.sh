@@ -10,6 +10,7 @@ if [ ! -f "$CONFIG" ]; then
   "force_denylist_unmount": true,
   "hide_lineage_resources": false,
   "hide_lineage_features": false,
+  "hide_lineage_broadcasts": false,
   "targets": []
 }
 EOF

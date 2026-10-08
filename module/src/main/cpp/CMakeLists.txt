@@ -9,6 +9,7 @@ add_library(yukari SHARED
     binder_hook.cpp
     resource_hook.cpp
     feature_match.cpp
+    broadcast_match.cpp
     logger.cpp
 )
 

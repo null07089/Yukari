@@ -1,4 +1,5 @@
 #include "binder_hook.h"
+#include "broadcast_match.h"
 #include "feature_match.h"
 #include "logger.h"
 #include "service_cache.h"
@@ -47,6 +48,7 @@ bool g_jni_hook_installed = false;
 
 constexpr const char *kIServiceManagerDescriptor = "android.os.IServiceManager";
 constexpr const char *kIPackageManagerDescriptor = "android.content.pm.IPackageManager";
+constexpr const char *kActivityManagerDescriptor = "android.app.IActivityManager";
 
 constexpr jint kSvcListServices = 4;
 
@@ -68,7 +70,16 @@ struct PackageTransactions {
 };
 
 PackageTransactions g_package_transactions;
+
+// Broadcast-action hiding is opt-in per target process.
+struct ActivityTransactions {
+    jint broadcast_intent = 0;
+    jint broadcast_intent_with_feature = 0;
+};
+
+ActivityTransactions g_activity_transactions;
 std::atomic<bool> g_feature_filtering{false};
+std::atomic<bool> g_broadcast_filtering{false};
 
 // Binder command buffers are bounded by the kernel's transaction limit.  Keep
 // a conservative userspace ceiling before doing pointer arithmetic on data
@@ -82,6 +93,8 @@ struct ParcelMethods {
     jmethodID set_data_position = nullptr;
     jmethodID read_string = nullptr;
     jmethodID write_string = nullptr;
+    jmethodID read_string8 = nullptr;
+    jmethodID write_string8 = nullptr;
     jmethodID read_int = nullptr;
     jmethodID obtain = nullptr;
     jmethodID append_from = nullptr;
@@ -278,11 +291,26 @@ void init_service_transactions(JNIEnv *env) {
         clear_jni_exception(env);
     }
 
+    jclass activity_stub = env ? env->FindClass("android/app/IActivityManager$Stub") : nullptr;
+    if (activity_stub) {
+        ActivityTransactions activities;
+        activities.broadcast_intent =
+            read_transaction_field(env, activity_stub, "TRANSACTION_broadcastIntent");
+        activities.broadcast_intent_with_feature =
+            read_transaction_field(env, activity_stub, "TRANSACTION_broadcastIntentWithFeature");
+        env->DeleteLocalRef(activity_stub);
+        g_activity_transactions = activities;
+    } else {
+        clear_jni_exception(env);
+    }
+
     log_info("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d; "
-             "PM hasFeature=%d",
+             "PM hasFeature=%d; AM broadcast=%d/%d",
              transactions.get_service, transactions.check_service, transactions.get_service2,
              transactions.check_service2, transactions.list_services, transactions.debug_info,
-             g_package_transactions.has_system_feature);
+             g_package_transactions.has_system_feature,
+             g_activity_transactions.broadcast_intent,
+             g_activity_transactions.broadcast_intent_with_feature);
 }
 
 bool init_parcel_methods(JNIEnv *env) {
@@ -328,6 +356,22 @@ bool init_parcel_methods(JNIEnv *env) {
         env->DeleteGlobalRef(methods.cls);
         pthread_mutex_unlock(&g_parcel_mutex);
         return false;
+    }
+
+    // Intent actions moved from writeString (UTF-16) to writeString8 (UTF-8);
+    // both accessors are optional so older releases still get the UTF-16 path.
+    methods.read_string8 = find_method("readString8", "()Ljava/lang/String;");
+    if (env->ExceptionCheck() || !methods.read_string8) {
+        clear_jni_exception(env);
+        methods.read_string8 = nullptr;
+    }
+    if (methods.read_string8) {
+        methods.write_string8 = find_method("writeString8", "(Ljava/lang/String;)V");
+    }
+    if (env->ExceptionCheck() || !methods.write_string8) {
+        clear_jni_exception(env);
+        methods.read_string8 = nullptr;
+        methods.write_string8 = nullptr;
     }
 
     methods.obtain = env->GetStaticMethodID(methods.cls, "obtain", "()Landroid/os/Parcel;");
@@ -627,6 +671,116 @@ jobject filtered_name_request(JNIEnv *env, jobject parcel, jint name_position,
         if (retained) recycle_request(env, retained);
         return nullptr;
     }
+    return retained;
+}
+
+// Broadcast requests embed the Intent early in the parcel; the action is a
+// length-prefixed string (UTF-8 on newer releases, UTF-16 before that).
+// ActivityManager rejects lineage* protected actions from apps, so scan a
+// bounded prefix of a private copy and replace any protected action with an
+// equal-length placeholder; the broadcast is then accepted as an ordinary,
+// unprotected one.  The copy is owned by this process, so writing is safe.
+constexpr jint kMaxBroadcastScanBytes = 8 * 1024;
+constexpr jint kMinBroadcastActionLength = 32;
+constexpr jint kMaxBroadcastActionLength = 80;
+
+bool scrub_broadcast_action_at(JNIEnv *env, jobject parcel, jint position, jmethodID read,
+                               jmethodID write) {
+    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return false;
+    }
+    auto value = static_cast<jstring>(env->CallObjectMethod(parcel, read));
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        if (value) env->DeleteLocalRef(value);
+        return false;
+    }
+    if (!value) return false;
+    const std::string action = jstring_ascii(env, value);
+    jstring replacement = !action.empty() && hide_broadcast_action(action)
+                              ? replacement_for(env, value)
+                              : nullptr;
+    env->DeleteLocalRef(value);
+    if (!replacement || env->ExceptionCheck()) {
+        if (replacement) env->DeleteLocalRef(replacement);
+        clear_jni_exception(env);
+        return false;
+    }
+    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
+    if (!env->ExceptionCheck()) {
+        env->CallVoidMethod(parcel, write, replacement);
+    }
+    env->DeleteLocalRef(replacement);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return false;
+    }
+    return true;
+}
+
+jobject filtered_broadcast_request(JNIEnv *env, jobject parcel) {
+    if (!g_parcel_methods.obtain || !g_parcel_methods.append_from || !g_parcel_methods.recycle ||
+        env->ExceptionCheck()) return nullptr;
+    const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
+    if (env->ExceptionCheck() || size <= 0 || size > MAX_REPLY_BUF) {
+        clear_jni_exception(env);
+        return nullptr;
+    }
+    if (env->PushLocalFrame(4) < 0) {
+        clear_jni_exception(env);
+        return nullptr;
+    }
+    jobject copy = env->CallStaticObjectMethod(g_parcel_methods.cls, g_parcel_methods.obtain);
+    if (copy && !env->ExceptionCheck()) {
+        env->CallVoidMethod(copy, g_parcel_methods.append_from, parcel, 0, size);
+    }
+    int hits = 0;
+    const jint limit = size < kMaxBroadcastScanBytes ? size : kMaxBroadcastScanBytes;
+    for (jint position = 0; copy && !env->ExceptionCheck() && position <= limit - 4;
+         position += 4) {
+        env->CallVoidMethod(copy, g_parcel_methods.set_data_position, position);
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            break;
+        }
+        const jint length = env->CallIntMethod(copy, g_parcel_methods.read_int);
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            continue;
+        }
+        if (length < kMinBroadcastActionLength || length > kMaxBroadcastActionLength) continue;
+        if (g_parcel_methods.read_string8 &&
+            scrub_broadcast_action_at(env, copy, position, g_parcel_methods.read_string8,
+                                      g_parcel_methods.write_string8)) {
+            ++hits;
+            continue;
+        }
+        if (scrub_broadcast_action_at(env, copy, position, g_parcel_methods.read_string,
+                                      g_parcel_methods.write_string)) {
+            ++hits;
+        }
+    }
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        if (copy) recycle_request(env, copy);
+        copy = nullptr;
+    } else if (copy) {
+        const jint copy_size = env->CallIntMethod(copy, g_parcel_methods.data_size);
+        if (env->ExceptionCheck() || copy_size != size || hits == 0) {
+            clear_jni_exception(env);
+            recycle_request(env, copy);
+            copy = nullptr;
+        }
+    }
+    jobject retained = env->PopLocalFrame(copy);
+    if (env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        if (retained) recycle_request(env, retained);
+        return nullptr;
+    }
+    if (retained && hits > 0) log_info("scrubbed %d lineage broadcast action(s)", hits);
     return retained;
 }
 
@@ -1065,6 +1219,12 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
     const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
                                 code == g_package_transactions.has_system_feature &&
                                 (flags & TF_ONE_WAY) == 0;
+    const bool broadcast_filtering = g_broadcast_filtering.load(std::memory_order_acquire);
+    const bool is_broadcast = broadcast_filtering && (flags & TF_ONE_WAY) == 0 &&
+                              ((g_activity_transactions.broadcast_intent > 0 &&
+                                code == g_activity_transactions.broadcast_intent) ||
+                               (g_activity_transactions.broadcast_intent_with_feature > 0 &&
+                                code == g_activity_transactions.broadcast_intent_with_feature));
     jint name_position = -1;
     if ((is_list || is_debug || is_lookup || is_has_feature) && data_obj != nullptr &&
         init_parcel_methods(env)) {
@@ -1081,9 +1241,17 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
         filtered_request = filtered_name_request(env, data_obj, name_position, hide_feature, false);
     }
 
-    const jboolean result = g_original_transact_native(env, thiz, code,
-                                                      filtered_request ? filtered_request : data_obj, reply_obj, flags);
+    jobject broadcast_request = nullptr;
+    if (is_broadcast && data_obj != nullptr && init_parcel_methods(env) &&
+        interface_name_position(env, data_obj, kActivityManagerDescriptor) >= 0) {
+        broadcast_request = filtered_broadcast_request(env, data_obj);
+    }
+
+    jobject request_to_send = filtered_request ? filtered_request : data_obj;
+    if (broadcast_request) request_to_send = broadcast_request;
+    const jboolean result = g_original_transact_native(env, thiz, code, request_to_send, reply_obj, flags);
     if (filtered_request) recycle_request(env, filtered_request);
+    if (broadcast_request) recycle_request(env, broadcast_request);
     // Never swallow an exception raised by the real Binder implementation;
     // callers rely on RemoteException propagation semantics.
     if (result == JNI_FALSE || reply_obj == nullptr || env->ExceptionCheck()) {
@@ -1201,6 +1369,10 @@ std::vector<ElfMappingId> find_mappings() {
 
 void set_feature_filtering(bool enabled) {
     g_feature_filtering.store(enabled, std::memory_order_release);
+}
+
+void set_broadcast_filtering(bool enabled) {
+    g_broadcast_filtering.store(enabled, std::memory_order_release);
 }
 
 bool install_jni_hook(JNIEnv *env, zygisk::Api *api) {

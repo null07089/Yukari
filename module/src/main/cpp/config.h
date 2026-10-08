@@ -15,6 +15,9 @@ struct YukariConfig {
     // Hide the LineageOS system features (org.lineageos.*) from
     // PackageManager.hasSystemFeature and getSystemAvailableFeatures.
     bool hide_lineage_features = false;
+    // Rewrite the lineage protected-broadcast actions in outbound broadcasts so
+    // sending them is no longer rejected on LineageOS.
+    bool hide_lineage_broadcasts = false;
     std::vector<std::string> targets;
 };
 
