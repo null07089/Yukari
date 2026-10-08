@@ -26,6 +26,10 @@ jobs:
   build:
     name: Build and package arm64-v8a module
     runs-on: ubuntu-latest
+    # Store ZIP DOS timestamps in the maintainer's timezone so Android tools,
+    # which ignore the UT extra field, do not show them eight hours behind.
+    env:
+      TZ: Asia/Shanghai
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
