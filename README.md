@@ -30,6 +30,22 @@ placeholders; the caller's original Parcel and the reply layout remain intact.
 The legacy ioctl fallback still filters enumeration only, without direct
 lookup redirection or Java caller classification.
 
+Beyond ServiceManager, each target process can opt into three additional
+ROM-signal channels (all off by default, all process-local and
+length-preserving):
+
+- **Resource package** — AssetManager name/ID lookups treat `lineageos.platform`
+  (resource package id `0x3f`) as absent; requires the Android 9+ entry points.
+- **System features** — `IPackageManager.hasSystemFeature` request names are
+  rewritten and `Parcel.nativeReadString8/16` returns equal-length placeholders
+  for the `org.lineageos.*` names, so enumeration cannot observe them.
+- **Protected broadcasts** — outbound `IActivityManager` broadcast requests are
+  copied and the ten lineage protected actions replaced, so sends succeed
+  silently instead of raising `SecurityException`.
+
+Module updates require a reboot: Zygisk keeps the module `.so` mapped in
+zygote, and replacing the file under a live mapping crashes the process.
+
 Private ELF symbols are hidden with a linker version script and stripped from
 release artifacts. The module mapping can still be visible in `/proc/self/maps`
 because the JNI callback must remain resident; unloading it safely would

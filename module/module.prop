@@ -1,6 +1,6 @@
 id=Yukari
 name=Yukari
-version=1.0.0
-versionCode=1
+version=2.0
+versionCode=20000
 author=秋山羽桜
-description=Hide custom ROM service list
+description=Hide custom ROM service, resource, feature and broadcast signals

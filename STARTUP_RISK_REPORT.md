@@ -247,3 +247,25 @@ SDK 36、build-tools 35.0.0、NDK 27.2.12479018 和 CMake 3.22.1。日志中的 
 ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native libbinder 查询、
 可信前缀下的间接查询以及厂商后续注入 `sCache` 仍属于已知边界；若检测仍存在，
 需提供检测应用/调用路径与 ROM 版本，不能仅凭 `profile` 匹配规则已存在宣称彻底解决。
+
+## 11. 追加 ROM 信号通道（2.0）
+
+除 ServiceManager 外，2.0 版按需在目标进程内隐藏另外三类 LineageOS 信号，均默认
+关闭、等长改写、不修改系统镜像：
+
+| 通道 | 开关 | 钩子 | 已知边界 |
+| --- | --- | --- | --- |
+| 资源包 | `hide_lineage_resources` | `AssetManager` native 名称/ID 查询 | Android 9+ 才有对应签名；包列表与 SDK 类仍可见 |
+| 系统 feature | `hide_lineage_features` | `IPackageManager.hasSystemFeature` 请求改写；`Parcel.nativeReadString8/16` 返回等长占位串 | 依赖 feature 的 Lineage 集成会降级 |
+| 受保护广播 | `hide_lineage_broadcasts` | 复制 `IActivityManager` 广播请求并替换 10 个 lineage Action | `PendingIntent` 代发不经过应用事务 |
+
+本轮验证确认了两条硬约束：
+
+- **不要写 Binder 回复 Parcel。** 回复可能是指向 binder 缓冲区的 data-reference，
+  首版在 `getSystemAvailableFeatures` 回复里原地 `writeString8` 导致多应用在
+  `Parcel::writeInt32` 触发 SIGSEGV；feature 枚举已改为在 `Parcel` 读取侧替换返回值，
+  广播/服务则改写私有请求副本，均不再触碰回复字节；
+- **更新模块必须重启设备。** zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
+  新旧页混用并使 zygote instruction abort；替换 `.so` 后需重启加载新版本。
+
+以上改动不改变原有 ServiceManager 策略；三条通道互相独立，可按目标应用单独开启。

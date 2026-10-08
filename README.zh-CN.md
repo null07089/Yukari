@@ -34,6 +34,20 @@ GOT 槽直接指向模块 `.text`。
 受信任框架/Lineage API 间接获取服务仍可能绕过当前边界。前缀保护是启动兼容策略，
 不是强制安全边界；不能承诺任何检测方式均不可见。
 
+### 追加 ROM 信号通道（可选）
+
+除 ServiceManager 外，目标进程还可按需启用三条独立通道，全部只作用于目标进程、
+只做等长改写、不修改系统镜像：
+
+| 通道 | 钩子位置 | 效果 | 已知边界 |
+| --- | --- | --- | --- |
+| 资源包 | `AssetManager` native 名称/ID 查询 | `lineageos.platform`（资源包 id `0x3f`）按不存在处理 | 需要 Android 9+；包列表与 SDK 类仍可见 |
+| 系统 feature | `IPackageManager.hasSystemFeature` 请求改写 + `Parcel.nativeReadString8/16` 返回值替换 | `hasSystemFeature` 返回 `false`，枚举结果为等长占位符 | 依赖 `org.lineageos.*` 决定自身集成的应用会降级 |
+| 受保护广播 | 复制 `IActivityManager` 广播请求并等长替换 10 个 lineage Action | 发送不再抛 `SecurityException`，等同 AOSP 静默成功 | `PendingIntent` 代发路径不经过应用事务，不在覆盖内 |
+
+**更新模块后必须重启设备**：zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
+新旧页混用并导致 zygote 崩溃。三条通道默认关闭，阈值和风险见下节配置说明。
+
 ## 可观察特征取舍
 
 | 特征 | 旧实现 | 当前实现 |
@@ -103,6 +117,7 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
 - 启用 `BinderProxy.transactNative` JNI hook，验证列表/调试回复；
 - 在不支持该 JNI 签名的旧系统上启用 `install_hooks()` ioctl 回退；
 - 需要时打开 `hide_lineage_resources`，验证目标进程内的资源隐藏；
+- 按需打开 `hide_lineage_features`、`hide_lineage_broadcasts`，验证 feature 与广播隐藏；
 - 最后打开 CMake 的 strip/version-script 检查，确认发布 ELF 不含私有符号。
 
 1. **构建检查**
