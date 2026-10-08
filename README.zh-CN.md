@@ -3,6 +3,7 @@
 Yukari 是一个按目标应用生效的 Zygisk 模块，用于隐藏自定义 ROM 的
 ServiceManager 服务信号。固定匹配关键字为 `lineage`、`crdroid`、`aospa`、
 `pixelexperience`、`omnirom`、`protonaosp`，并精确匹配 `profile`。
+可选配置还会在目标进程内隐藏 `lineageos.platform` 资源包（见下文配置）。
 
 ## 实现策略
 
@@ -54,6 +55,7 @@ GOT 槽直接指向模块 `.text`。
 {
   "enabled": true,
   "force_denylist_unmount": true,
+  "hide_lineage_resources": false,
   "targets": ["com.example.app"]
 }
 ```
@@ -62,9 +64,17 @@ GOT 槽直接指向模块 `.text`。
 如果目标应用依赖 Magisk 挂载的文件或资源，可将 `force_denylist_unmount` 设为
 `false`；服务过滤仍然生效。
 
+`hide_lineage_resources` 设为 `true` 时，还会在目标进程内隐藏
+`lineageos.platform` 资源包：对资源包 id `0x3f`（以及 `defPackage` 为
+`lineageos.platform`）的 AssetManager 名称/ID 查询返回“不存在”，效果等同于
+非 LineageOS 设备。该实现不改写 PackageManager，也不修改系统镜像；真正使用
+Lineage SDK 资源的目标应用会失去这些资源，而包列表、SDK 类和 `/system`
+文件仍然可见。除确有该类探测需求的目标外建议保持关闭。该隐藏依赖 Android 9
+（API 28）起的 AssetManager 方法签名；旧系统上开关会被跳过，资源视图保持原样。
+
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
-脚本验证三个已知配置字段；未知字段或不支持的 JSON 转义会中止写入并保留原配置。
+脚本验证已知配置字段；未知字段或不支持的 JSON 转义会中止写入并保留原配置。
 
 ## 分阶段验证
 
@@ -73,6 +83,7 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
 - 仅保留 `service_cache.cpp`，验证 `sCache` 清理；
 - 启用 `BinderProxy.transactNative` JNI hook，验证列表/调试回复；
 - 在不支持该 JNI 签名的旧系统上启用 `install_hooks()` ioctl 回退；
+- 需要时打开 `hide_lineage_resources`，验证目标进程内的资源隐藏；
 - 最后打开 CMake 的 strip/version-script 检查，确认发布 ELF 不含私有符号。
 
 1. **构建检查**
@@ -118,3 +129,12 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    同时验证请求 `dataSize/dataPosition` 和字节内容未改变、真实 Binder 异常仍正常传播。
    确认 logcat 的 `SM transactions` 日志与该 ROM 的实际事务号一致；启动阶段不得出现
    NPE 或 native 崩溃。
+
+6. **资源隐藏验证**（`hide_lineage_resources: true`）
+
+   logcat 中目标进程应出现 `AssetManager resource hook installed`。在目标应用内
+   `getResourcesForApplication("lineageos.platform")` 仍会成功（模块不隐藏包本身），
+   但 `getIdentifier("config_enableLiveDisplay", "bool", "lineageos.platform")` 返回 0，
+   对应 `getBoolean`/`getInteger` 抛出 `NotFoundException`；包列表和 SDK 类不受影响。
+   同一设备上的非目标对照应用仍应读到 `true`/`6500`，确认隐藏只在目标进程生效。
+   同时回归目标应用的核心功能，确认没有资源异常或崩溃。

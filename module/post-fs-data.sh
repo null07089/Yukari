@@ -8,6 +8,7 @@ if [ ! -f "$CONFIG" ]; then
 {
   "enabled": true,
   "force_denylist_unmount": true,
+  "hide_lineage_resources": false,
   "targets": []
 }
 EOF

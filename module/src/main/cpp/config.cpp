@@ -174,6 +174,7 @@ bool load_config(YukariConfig &out) {
     out.enabled = true;
     parse_bool(text, "enabled", out.enabled);
     parse_bool(text, "force_denylist_unmount", out.force_denylist_unmount);
+    parse_bool(text, "hide_lineage_resources", out.hide_lineage_resources);
     out.targets = parse_targets(text);
     return true;
 }

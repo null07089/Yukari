@@ -3,7 +3,8 @@
 Yukari is a target-scoped Zygisk module that hides custom-ROM ServiceManager
 signals. Matching is ASCII case-insensitive for `lineage`, `crdroid`, `aospa`,
 `pixelexperience`, `omnirom`, `protonaosp`, plus the exact service name
-`profile`.
+`profile`. An opt-in mode additionally hides the `lineageos.platform` resource
+package inside target processes.
 
 The preferred implementation hooks `android.os.BinderProxy.transactNative` via
 Zygisk's JNI hook API. ServiceManager enumeration/debug replies are filtered at
@@ -46,12 +47,23 @@ Device-level startup and detector regression checks remain necessary.
 {
   "enabled": true,
   "force_denylist_unmount": true,
+  "hide_lineage_resources": false,
   "targets": ["com.example.app"]
 }
 ```
 
 Set `force_denylist_unmount` to `false` on devices where target apps depend
 on Magisk-provided mounts; service filtering remains enabled.
+
+Set `hide_lineage_resources` to `true` to also hide the `lineageos.platform`
+resource package inside target processes. The hook filters AssetManager
+name/ID lookups for resource package id `0x3f` (and `defPackage`
+`lineageos.platform`), so resource probes behave as on a non-LineageOS build
+without touching PackageManager or the system image. Applications that
+legitimately use Lineage SDK resources lose them in that process, and package
+lists, SDK classes and `/system` files stay visible; leave the flag off unless
+a target specifically probes these resources. The hook needs the Android 9
+(API 28) AssetManager entry points; on older releases the flag is skipped.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -71,3 +83,14 @@ Install Gradle 8.11.1, JDK 17 and the Android SDK/NDK locally. The repository's
 ./gradlew :module:assembleRelease
 bash scripts/package.sh
 ```
+
+## Verification
+
+With `hide_lineage_resources` enabled, a target process should log
+`AssetManager resource hook installed` and see
+`getIdentifier("config_enableLiveDisplay", "bool", "lineageos.platform")` return
+`0` (`getBoolean`/`getInteger` then throw `NotFoundException`), while the
+package itself stays listed and SDK classes remain loadable. A non-target app
+on the same device must still read `true`/`6500`, confirming the hook is
+process-local. Regression-test the target's own features for unexpected
+resource failures.

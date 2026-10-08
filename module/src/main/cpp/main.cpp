@@ -1,6 +1,7 @@
 #include "binder_hook.h"
 #include "config.h"
 #include "logger.h"
+#include "resource_hook.h"
 #include "service_cache.h"
 #include "zygisk.hpp"
 
@@ -61,6 +62,7 @@ public:
     void preAppSpecialize(zygisk::AppSpecializeArgs *args) override {
         g_enabled_for_process = false;
         g_jni_hook_ready_ = false;
+        g_resource_hook_ready_ = false;
         g_package_name.fill('\0');
         if (!args) return;
 
@@ -90,6 +92,14 @@ public:
             g_jni_hook_ready_ = false;
             log_error("JNI hook setup failed; will try ioctl fallback");
         }
+        if (g_config->hide_lineage_resources) {
+            try {
+                g_resource_hook_ready_ = install_resource_hook(env_, api_);
+            } catch (...) {
+                g_resource_hook_ready_ = false;
+                log_error("resource hook setup failed; resources stay visible");
+            }
+        }
         log_info("matched target %s", g_package_name.data());
     }
 
@@ -111,7 +121,8 @@ public:
             // optional instrumentation abort application startup.
             log_error("fallback hook setup failed; continuing without fallback");
         }
-        log_info("enabled for %s", g_package_name.data());
+        log_info("enabled for %s (resource hide=%d)", g_package_name.data(),
+                 g_resource_hook_ready_ ? 1 : 0);
     }
 
     void preServerSpecialize(zygisk::ServerSpecializeArgs *) override {
@@ -125,6 +136,7 @@ private:
     zygisk::Api *api_ = nullptr;
     JNIEnv *env_ = nullptr;
     bool g_jni_hook_ready_ = false;
+    bool g_resource_hook_ready_ = false;
 };
 
 REGISTER_ZYGISK_MODULE(YukariModule)
