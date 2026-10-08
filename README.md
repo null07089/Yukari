@@ -122,10 +122,11 @@ Install Gradle 8.11.1, JDK 17 and the Android SDK/NDK locally. The repository's
 bash scripts/package.sh
 ```
 
-`v*` tags are published through the GitHub Actions workflow together with an
-`update.json` manifest; `module.prop` points `updateJson` at
-`releases/latest/download/update.json`, so Magisk offers module updates from
-the repository's releases.
+`v*` tags are published through the GitHub Actions workflow. The workflow also
+updates the repository-root `update.json` on `main`, and `module.prop` points
+`updateJson` at
+`https://raw.githubusercontent.com/null07089/Yukari/main/update.json`, so
+Magisk offers module updates from the repository's releases.
 
 ## Verification
 

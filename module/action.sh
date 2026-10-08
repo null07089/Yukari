@@ -15,18 +15,18 @@ if [ ! -d "$MODULE_DIR" ]; then
     exit 1
 fi
 
-# Preserve existing settings
+# Preserve existing settings; defaults follow the shipped configuration.
 ENABLED="true"
-ENHANCED="false"
-HIDE_LINEAGE_RESOURCES="false"
-HIDE_LINEAGE_FEATURES="false"
-HIDE_LINEAGE_BROADCASTS="false"
+ENHANCED="true"
+HIDE_LINEAGE_RESOURCES="true"
+HIDE_LINEAGE_FEATURES="true"
+HIDE_LINEAGE_BROADCASTS="true"
 if [ -f "$CONFIG" ]; then
     grep -q '"enabled"[[:space:]]*:[[:space:]]*false' "$CONFIG" && ENABLED="false"
-    grep -q '"force_denylist_unmount"[[:space:]]*:[[:space:]]*true' "$CONFIG" && ENHANCED="true"
-    grep -q '"hide_lineage_resources"[[:space:]]*:[[:space:]]*true' "$CONFIG" && HIDE_LINEAGE_RESOURCES="true"
-    grep -q '"hide_lineage_features"[[:space:]]*:[[:space:]]*true' "$CONFIG" && HIDE_LINEAGE_FEATURES="true"
-    grep -q '"hide_lineage_broadcasts"[[:space:]]*:[[:space:]]*true' "$CONFIG" && HIDE_LINEAGE_BROADCASTS="true"
+    grep -q '"force_denylist_unmount"[[:space:]]*:[[:space:]]*false' "$CONFIG" && ENHANCED="false"
+    grep -q '"hide_lineage_resources"[[:space:]]*:[[:space:]]*false' "$CONFIG" && HIDE_LINEAGE_RESOURCES="false"
+    grep -q '"hide_lineage_features"[[:space:]]*:[[:space:]]*false' "$CONFIG" && HIDE_LINEAGE_FEATURES="false"
+    grep -q '"hide_lineage_broadcasts"[[:space:]]*:[[:space:]]*false' "$CONFIG" && HIDE_LINEAGE_BROADCASTS="false"
 fi
 
 CURRENT_USER="$(am get-current-user 2>/dev/null)"

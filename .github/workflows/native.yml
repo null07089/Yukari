@@ -146,7 +146,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Generate update manifest
+      - name: Publish GitHub release for tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/Yukari.zip
+          generate_release_notes: true
+
+      - name: Sync update manifest to main
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
@@ -154,7 +161,11 @@ jobs:
           version="$(grep '^version=' module/module.prop | cut -d= -f2-)"
           version_code="$(grep '^versionCode=' module/module.prop | cut -d= -f2-)"
           tag="${GITHUB_REF_NAME}"
-          cat > out/update.json <<EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --depth=1 origin main
+          git checkout -B update-manifest origin/main
+          cat > update.json <<EOF
           {
             "version": "${version}",
             "versionCode": ${version_code},
@@ -162,16 +173,14 @@ jobs:
             "changelog": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}"
           }
           EOF
-          cat out/update.json
-
-      - name: Publish GitHub release for tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            out/Yukari.zip
-            out/update.json
-          generate_release_notes: true
+          cat update.json
+          git add update.json
+          if git diff --cached --quiet; then
+            echo "update.json is already current"
+          else
+            git commit -m "Update update.json for ${tag}"
+            git push origin HEAD:main
+          fi
 
       - name: Upload build diagnostics
         if: failure()

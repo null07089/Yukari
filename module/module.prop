@@ -4,4 +4,4 @@ version=2.0
 versionCode=2
 author=秋山羽桜
 description=Hide custom ROM service, resource, feature and broadcast signals
-updateJson=https://github.com/null07089/Yukari/releases/latest/download/update.json
+updateJson=https://raw.githubusercontent.com/null07089/Yukari/main/update.json
