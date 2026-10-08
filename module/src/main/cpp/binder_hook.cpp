@@ -62,10 +62,9 @@ struct ServiceTransactions {
 ServiceTransactions g_service_transactions;
 
 // Feature hiding is opt-in per target process; when disabled the
-// IPackageManager descriptor scan and reply scrubbing are skipped entirely.
+// IPackageManager descriptor scan and Parcel read hooks are skipped.
 struct PackageTransactions {
     jint has_system_feature = 0;
-    jint get_system_available_features = 0;
 };
 
 PackageTransactions g_package_transactions;
@@ -83,8 +82,6 @@ struct ParcelMethods {
     jmethodID set_data_position = nullptr;
     jmethodID read_string = nullptr;
     jmethodID write_string = nullptr;
-    jmethodID read_string8 = nullptr;
-    jmethodID write_string8 = nullptr;
     jmethodID read_int = nullptr;
     jmethodID obtain = nullptr;
     jmethodID append_from = nullptr;
@@ -275,8 +272,6 @@ void init_service_transactions(JNIEnv *env) {
         PackageTransactions packages;
         packages.has_system_feature =
             read_transaction_field(env, package_stub, "TRANSACTION_hasSystemFeature");
-        packages.get_system_available_features =
-            read_transaction_field(env, package_stub, "TRANSACTION_getSystemAvailableFeatures");
         env->DeleteLocalRef(package_stub);
         g_package_transactions = packages;
     } else {
@@ -284,11 +279,10 @@ void init_service_transactions(JNIEnv *env) {
     }
 
     log_info("SM transactions: get=%d check=%d get2=%d check2=%d list=%d debug=%d; "
-             "PM hasFeature=%d features=%d",
+             "PM hasFeature=%d",
              transactions.get_service, transactions.check_service, transactions.get_service2,
              transactions.check_service2, transactions.list_services, transactions.debug_info,
-             g_package_transactions.has_system_feature,
-             g_package_transactions.get_system_available_features);
+             g_package_transactions.has_system_feature);
 }
 
 bool init_parcel_methods(JNIEnv *env) {
@@ -334,22 +328,6 @@ bool init_parcel_methods(JNIEnv *env) {
         env->DeleteGlobalRef(methods.cls);
         pthread_mutex_unlock(&g_parcel_mutex);
         return false;
-    }
-
-    // FeatureInfo migrated from writeString (UTF-16) to writeString8 (UTF-8);
-    // both accessors are optional so older releases still get the UTF-16 path.
-    methods.read_string8 = find_method("readString8", "()Ljava/lang/String;");
-    if (env->ExceptionCheck() || !methods.read_string8) {
-        clear_jni_exception(env);
-        methods.read_string8 = nullptr;
-    }
-    if (methods.read_string8) {
-        methods.write_string8 = find_method("writeString8", "(Ljava/lang/String;)V");
-    }
-    if (env->ExceptionCheck() || !methods.write_string8) {
-        clear_jni_exception(env);
-        methods.read_string8 = nullptr;
-        methods.write_string8 = nullptr;
     }
 
     methods.obtain = env->GetStaticMethodID(methods.cls, "obtain", "()Landroid/os/Parcel;");
@@ -749,88 +727,70 @@ void filter_debug_info_reply(JNIEnv *env, jobject parcel) {
     reset_reply_position(env, parcel);
 }
 
-// Shortest and longest entries in feature_match.cpp:
-// "org.lineageos.trust" (19) .. "org.lineageos.globalactions" (27).
-constexpr jint kMinFeatureNameLength = 19;
-constexpr jint kMaxFeatureNameLength = 27;
+// Feature hiding uses two interception points:
+//  - hook_transact_native rewrites IPackageManager.hasSystemFeature requests,
+//    so the framework answers false for the hidden names.
+//  - Parcel's native string readers substitute an equal-length placeholder
+//    when a hidden feature name is read, so getSystemAvailableFeatures and
+//    other enumeration paths cannot observe the real names.  Only the returned
+//    Java string is replaced; the Parcel bytes are never modified, so binder
+//    reply buffers stay untouched.
+using ParcelReadStringFn = jstring (*)(JNIEnv *, jclass, jlong);
 
-// Reads a Parcel string at position and rewrites it with an equal-length
-// placeholder when it matches a hidden feature.  read/write are the matching
-// UTF-16 or UTF-8 accessors.
-bool scrub_feature_string_at(JNIEnv *env, jobject parcel, jint position, jmethodID read,
-                             jmethodID write) {
-    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
-    if (env->ExceptionCheck()) {
-        clear_jni_exception(env);
-        return false;
-    }
-    auto value = static_cast<jstring>(env->CallObjectMethod(parcel, read));
-    if (env->ExceptionCheck()) {
-        clear_jni_exception(env);
-        if (value) env->DeleteLocalRef(value);
-        return false;
-    }
-    if (!value) return false;
+ParcelReadStringFn g_original_parcel_read_string8 = nullptr;
+ParcelReadStringFn g_original_parcel_read_string16 = nullptr;
+bool g_feature_read_hooks_installed = false;
+
+jstring filter_feature_read(JNIEnv *env, jstring value) {
+    if (!env || !value || env->ExceptionCheck()) return value;
     const std::string name = jstring_ascii(env, value);
-    jstring replacement = !name.empty() && hide_feature(name) ? replacement_for(env, value) : nullptr;
-    env->DeleteLocalRef(value);
+    if (name.empty() || !hide_feature(name)) return value;
+    jstring replacement = replacement_for(env, value);
     if (!replacement || env->ExceptionCheck()) {
         if (replacement) env->DeleteLocalRef(replacement);
         clear_jni_exception(env);
-        return false;
+        return value;
     }
-    env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
-    if (!env->ExceptionCheck()) {
-        env->CallVoidMethod(parcel, write, replacement);
-    }
-    env->DeleteLocalRef(replacement);
-    if (env->ExceptionCheck()) {
-        clear_jni_exception(env);
-        return false;
-    }
-    return true;
+    env->DeleteLocalRef(value);
+    return replacement;
 }
 
-// getSystemAvailableFeatures returns a ParceledListSlice<FeatureInfo> whose
-// layout changed across releases.  Instead of parsing the container, walk the
-// reply at 4-byte alignment: every FeatureInfo name is a length-prefixed
-// Parcel string, and overwriting it with underscores keeps the byte length and
-// therefore the parcel layout intact.  Lists larger than the Binder IPC size
-// are continued through a retriever Binder; real feature lists stay far below
-// that limit.
-void scrub_feature_reply(JNIEnv *env, jobject parcel) {
-    if (!reset_reply_position(env, parcel)) return;
-    const jint size = env->CallIntMethod(parcel, g_parcel_methods.data_size);
-    if (env->ExceptionCheck() || size < 8 || size > MAX_REPLY_BUF) {
-        reset_reply_position(env, parcel);
+jstring hook_parcel_read_string8(JNIEnv *env, jclass clazz, jlong ptr) {
+    if (!g_original_parcel_read_string8) return nullptr;
+    return filter_feature_read(env, g_original_parcel_read_string8(env, clazz, ptr));
+}
+
+jstring hook_parcel_read_string16(JNIEnv *env, jclass clazz, jlong ptr) {
+    if (!g_original_parcel_read_string16) return nullptr;
+    return filter_feature_read(env, g_original_parcel_read_string16(env, clazz, ptr));
+}
+
+void install_feature_read_hooks(JNIEnv *env, zygisk::Api *api) {
+    if (g_feature_read_hooks_installed || !env || !api) return;
+    JNINativeMethod methods[] = {
+        {"nativeReadString8", "(J)Ljava/lang/String;",
+         reinterpret_cast<void *>(hook_parcel_read_string8)},
+        {"nativeReadString16", "(J)Ljava/lang/String;",
+         reinterpret_cast<void *>(hook_parcel_read_string16)},
+    };
+    api->hookJniNativeMethods(env, "android/os/Parcel", methods, 2);
+
+    int installed = 0;
+    if (methods[0].fnPtr && methods[0].fnPtr != reinterpret_cast<void *>(hook_parcel_read_string8)) {
+        g_original_parcel_read_string8 = reinterpret_cast<ParcelReadStringFn>(methods[0].fnPtr);
+        ++installed;
+    }
+    if (methods[1].fnPtr && methods[1].fnPtr != reinterpret_cast<void *>(hook_parcel_read_string16)) {
+        g_original_parcel_read_string16 = reinterpret_cast<ParcelReadStringFn>(methods[1].fnPtr);
+        ++installed;
+    }
+    if (installed == 0) {
+        log_error("Parcel string read hook unavailable; feature enumeration stays visible");
         return;
     }
-    int hits = 0;
-    for (jint position = 0; position <= size - 4; position += 4) {
-        env->CallVoidMethod(parcel, g_parcel_methods.set_data_position, position);
-        if (env->ExceptionCheck()) {
-            clear_jni_exception(env);
-            break;
-        }
-        const jint length = env->CallIntMethod(parcel, g_parcel_methods.read_int);
-        if (env->ExceptionCheck()) {
-            clear_jni_exception(env);
-            continue;
-        }
-        if (length < kMinFeatureNameLength || length > kMaxFeatureNameLength) continue;
-        if (scrub_feature_string_at(env, parcel, position, g_parcel_methods.read_string,
-                                    g_parcel_methods.write_string)) {
-            ++hits;
-            continue;
-        }
-        if (g_parcel_methods.read_string8 &&
-            scrub_feature_string_at(env, parcel, position, g_parcel_methods.read_string8,
-                                    g_parcel_methods.write_string8)) {
-            ++hits;
-        }
-    }
-    reset_reply_position(env, parcel);
-    if (hits > 0) log_info("scrubbed %d lineage feature name(s) in PM reply", hits);
+    g_feature_read_hooks_installed = true;
+    log_info("Parcel string read hook installed (%d/2); lineage feature names filtered",
+             installed);
 }
 
 jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data_obj, jobject reply_obj,
@@ -1105,13 +1065,10 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
     const bool is_has_feature = feature_filtering && g_package_transactions.has_system_feature > 0 &&
                                 code == g_package_transactions.has_system_feature &&
                                 (flags & TF_ONE_WAY) == 0;
-    const bool is_feature_list = feature_filtering &&
-                                 g_package_transactions.get_system_available_features > 0 &&
-                                 code == g_package_transactions.get_system_available_features;
     jint name_position = -1;
-    if ((is_list || is_debug || is_lookup || is_has_feature || is_feature_list) && data_obj != nullptr &&
+    if ((is_list || is_debug || is_lookup || is_has_feature) && data_obj != nullptr &&
         init_parcel_methods(env)) {
-        name_position = (is_has_feature || is_feature_list)
+        name_position = is_has_feature
                             ? interface_name_position(env, data_obj, kIPackageManagerDescriptor)
                             : interface_name_position(env, data_obj, kIServiceManagerDescriptor);
     }
@@ -1138,8 +1095,6 @@ jboolean hook_transact_native(JNIEnv *env, jobject thiz, jint code, jobject data
         filter_list_reply(env, reply_obj);
     } else if (is_debug && descriptor_ready) {
         filter_debug_info_reply(env, reply_obj);
-    } else if (is_feature_list && descriptor_ready) {
-        scrub_feature_reply(env, reply_obj);
     }
     clear_jni_exception(env);
     return result;
@@ -1287,6 +1242,9 @@ bool install_jni_hook(JNIEnv *env, zygisk::Api *api) {
     }
     g_original_transact_native = original;
     g_jni_hook_installed = true;
+    if (g_feature_filtering.load(std::memory_order_acquire)) {
+        install_feature_read_hooks(env, api);
+    }
     log_info("BinderProxy.transactNative hook installed");
     return true;
 }
