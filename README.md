@@ -111,7 +111,9 @@ Set `hide_lineage_files` to `true` (default) to hide LineageOS filesystem
 fingerprints inside target processes: ROM-named entries are removed from
 directory listings of system paths (`/system`, `/product`, `/vendor`, `/odm`,
 `/apex`, ...), covering the `framework-res__lineage_*` RRO overlay, the
-`org.lineageos.*.xml` permission files and the platform resource APK; reflection
+`org.lineageos.*.xml` permission files and the platform resource APK;
+`readlink()`/`Files.readSymbolicLink()` results are scrubbed as well, so
+enumerating `/proc/self/fd` cannot reveal lineage-named open files; reflection
 on `android.content.res.AssetManager.LINEAGE_APK_PATH` throws
 `NoSuchFieldException`. The files on disk are untouched.
 
@@ -163,6 +165,8 @@ silently instead of raising `SecurityException`, and the module log shows
 rejected.
 
 With `hide_lineage_files` enabled, `new File("/product/overlay").list()` in a
-target process must not contain Lineage-named overlays and
+target process must not contain Lineage-named overlays,
 `AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` must throw
-`NoSuchFieldException`; a non-target app must still see both.
+`NoSuchFieldException`, and resolving `/proc/self/fd/*` with
+`Files.readSymbolicLink()` or `Os.readlink()` must not return a path containing
+`lineage`; a non-target app must still see all of them.

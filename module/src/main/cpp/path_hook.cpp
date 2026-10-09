@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "logger.h"
 #include "service_match.h"
@@ -15,6 +16,8 @@ using ListDirFn = jobjectArray (*)(JNIEnv *, jobject, jobject);
 using GetFieldByNameFn = jobject (*)(JNIEnv *, jobject, jstring);
 using GetFieldsFn = jobjectArray (*)(JNIEnv *, jobject);
 using GetFieldsBoolFn = jobjectArray (*)(JNIEnv *, jobject, jboolean);
+using ReadlinkStringFn = jstring (*)(JNIEnv *, jobject, jstring);
+using ReadlinkBytesFn = jbyteArray (*)(JNIEnv *, jclass, jlong);
 
 ListDirFn g_original_list0 = nullptr;
 GetFieldByNameFn g_original_get_declared_field = nullptr;
@@ -22,6 +25,8 @@ GetFieldByNameFn g_original_get_public_field = nullptr;
 GetFieldsFn g_original_get_declared_fields = nullptr;
 GetFieldsBoolFn g_original_get_declared_fields0 = nullptr;
 GetFieldsBoolFn g_original_get_declared_fields_unchecked = nullptr;
+ReadlinkStringFn g_original_linux_readlink = nullptr;
+ReadlinkBytesFn g_original_readlink0 = nullptr;
 jmethodID g_field_get_name = nullptr;
 bool g_path_hooks_installed = false;
 
@@ -228,6 +233,64 @@ jobjectArray hook_list0(JNIEnv *env, jobject thiz, jobject file) {
              dropped == 1 ? "y" : "ies", path.c_str());
     return filtered;
 }
+
+// android.system.Os.readlink() routes through libcore.io.Linux.readlink().
+// Detection code resolves /proc/self/fd entries with it; scrub ROM keywords
+// from the returned target instead of failing the call.
+jstring hook_linux_readlink(JNIEnv *env, jobject thiz, jstring path) {
+    if (!g_original_linux_readlink) return nullptr;
+    jstring result = g_original_linux_readlink(env, thiz, path);
+    if (!result || env->ExceptionCheck()) return result;
+    std::string value = jstring_to_ascii(env, result);
+    if (value.empty() || scrub_rom_keywords(value.data(), value.size()) == 0) return result;
+    jstring replacement = env->NewStringUTF(value.c_str());
+    if (!replacement || env->ExceptionCheck()) {
+        clear_jni_exception(env);
+        return result;
+    }
+    env->DeleteLocalRef(result);
+    return replacement;
+}
+
+// java.nio.file.Files.readSymbolicLink() routes through
+// UnixNativeDispatcher.readlink0(), which returns the raw target bytes.
+jbyteArray hook_readlink0(JNIEnv *env, jclass clazz, jlong path_address) {
+    if (!g_original_readlink0) return nullptr;
+    jbyteArray result = g_original_readlink0(env, clazz, path_address);
+    if (!result || env->ExceptionCheck()) return result;
+    const jsize length = env->GetArrayLength(result);
+    if (env->ExceptionCheck() || length <= 0) {
+        clear_jni_exception(env);
+        return result;
+    }
+    try {
+        std::vector<jbyte> bytes(static_cast<size_t>(length));
+        env->GetByteArrayRegion(result, 0, length, bytes.data());
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            return result;
+        }
+        if (scrub_rom_keywords(reinterpret_cast<char *>(bytes.data()),
+                               static_cast<size_t>(length)) == 0) {
+            return result;
+        }
+        jbyteArray replacement = env->NewByteArray(length);
+        if (!replacement || env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            return result;
+        }
+        env->SetByteArrayRegion(replacement, 0, length, bytes.data());
+        if (env->ExceptionCheck()) {
+            clear_jni_exception(env);
+            env->DeleteLocalRef(replacement);
+            return result;
+        }
+        env->DeleteLocalRef(result);
+        return replacement;
+    } catch (...) {
+        return result;
+    }
+}
 } // namespace
 
 bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
@@ -295,11 +358,33 @@ bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
         ++installed;
     }
 
+    JNINativeMethod readlink_methods[] = {
+        {"readlink", "(Ljava/lang/String;)Ljava/lang/String;",
+         reinterpret_cast<void *>(hook_linux_readlink)},
+    };
+    api->hookJniNativeMethods(env, "libcore/io/Linux", readlink_methods, 1);
+    if (readlink_methods[0].fnPtr && readlink_methods[0].fnPtr !=
+                                        reinterpret_cast<void *>(hook_linux_readlink)) {
+        g_original_linux_readlink = reinterpret_cast<ReadlinkStringFn>(readlink_methods[0].fnPtr);
+        ++installed;
+    }
+
+    JNINativeMethod nio_readlink_methods[] = {
+        {"readlink0", "(J)[B", reinterpret_cast<void *>(hook_readlink0)},
+    };
+    api->hookJniNativeMethods(env, "sun/nio/fs/UnixNativeDispatcher", nio_readlink_methods, 1);
+    if (nio_readlink_methods[0].fnPtr && nio_readlink_methods[0].fnPtr !=
+                                            reinterpret_cast<void *>(hook_readlink0)) {
+        g_original_readlink0 = reinterpret_cast<ReadlinkBytesFn>(nio_readlink_methods[0].fnPtr);
+        ++installed;
+    }
+
     if (installed == 0) {
         log_error("path hooks unavailable; Lineage file fingerprints stay visible");
         return false;
     }
     g_path_hooks_installed = true;
-    log_info("path hooks installed (%d/6); ROM file names and %s hidden", installed, kHiddenField);
+    log_info("path hooks installed (%d/8); ROM file names, readlink targets and %s hidden",
+             installed, kHiddenField);
     return true;
 }
