@@ -135,8 +135,8 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    ```
 
    tag `v*` 发布时 CI 会把 `update.json`（`version`/`versionCode`/`zipUrl`/
-   `changelog`）同步到 `main` 分支根目录；`module.prop` 的 `updateJson` 指向
-   `https://raw.githubusercontent.com/null07089/Yukari/main/update.json`，
+   `changelog`）同步到 `Dev` 分支根目录；`module.prop` 的 `updateJson` 指向
+   `https://raw.githubusercontent.com/null07089/Yukari/Dev/update.json`，
    Magisk 会按 `versionCode` 提示模块更新。
 
 2. **ELF 符号检查**（设备或 CI 主机）

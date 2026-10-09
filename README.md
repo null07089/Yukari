@@ -123,9 +123,9 @@ bash scripts/package.sh
 ```
 
 `v*` tags are published through the GitHub Actions workflow. The workflow also
-updates the repository-root `update.json` on `main`, and `module.prop` points
+updates the repository-root `update.json` on `Dev`, and `module.prop` points
 `updateJson` at
-`https://raw.githubusercontent.com/null07089/Yukari/main/update.json`, so
+`https://raw.githubusercontent.com/null07089/Yukari/Dev/update.json`, so
 Magisk offers module updates from the repository's releases.
 
 ## Verification

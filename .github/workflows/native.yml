@@ -153,7 +153,7 @@ jobs:
           files: out/Yukari.zip
           generate_release_notes: true
 
-      - name: Sync update manifest to main
+      - name: Sync update manifest to Dev
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
@@ -163,8 +163,8 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --depth=1 origin main
-          git checkout -B update-manifest origin/main
+          git fetch --depth=1 origin Dev
+          git checkout -B update-manifest origin/Dev
           cat > update.json <<EOF
           {
             "version": "${version}",
@@ -179,7 +179,7 @@ jobs:
             echo "update.json is already current"
           else
             git commit -m "Update update.json for ${tag}"
-            git push origin HEAD:main
+            git push origin HEAD:Dev
           fi
 
       - name: Upload build diagnostics
