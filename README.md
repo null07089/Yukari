@@ -137,6 +137,28 @@ updates the repository-root `update.json` on `Dev`, and `module.prop` points
 `https://raw.githubusercontent.com/null07089/Yukari/Dev/update.json`, so
 Magisk offers module updates from the repository's releases.
 
+## Kernel-side path hiding (optional)
+
+`scripts/patch-kernel.sh` applies the kernel complement for the file
+fingerprints the module no longer touches. For application processes
+(uid >= 10000) it rewrites ROM identifiers in the path strings that procfs
+prints, so `/proc/<pid>/fd/*`, `/proc/<pid>/map_files/*`, `/proc/<pid>/maps`,
+`smaps` and `numa_maps` no longer contain `lineage`, `crdroid` and the other
+keywords. The script is semantic (it locates `do_proc_readlink()` and
+`seq_file_path()` instead of line numbers) and idempotent, so trees with vendor
+or SUSFS modifications work as well:
+
+```bash
+scripts/patch-kernel.sh /path/to/kernel          # apply
+scripts/patch-kernel.sh --check /path/to/kernel  # report status only
+scripts/patch-kernel.sh --revert /path/to/kernel # remove it again
+```
+
+It writes `include/linux/yukari_hide.h` and backs up edited files as
+`*.yukari.bak`. Rebuild and flash the kernel afterwards. Only the displayed
+string is rewritten: file access, `stat` results and the resource system are
+untouched.
+
 ## Verification
 
 With `hide_lineage_resources` enabled, a target process should log

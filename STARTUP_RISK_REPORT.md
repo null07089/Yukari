@@ -263,7 +263,8 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
 2.1 起撤掉与文件路径暴露相关的列表过滤与 readlink 清洗（native 直读无效；改由内核
 procfs 清洗按应用 UID 覆盖，路径不可见性由 SUSFS 负责）；2.2 起在 `fede3d8`
 （资源/feature/广播/服务基线）之上只补回 `AssetManager.LINEAGE_APK_PATH` 的反射
-隐藏，其余文件指纹不归模块负责。
+隐藏，其余文件指纹不归模块负责。内核补丁已脚本化为 `scripts/patch-kernel.sh`
+（按函数语义定位、幂等、支持 `--check`/`--revert`，适配不同设备内核树）。
 
 本轮验证确认了两条硬约束：
 

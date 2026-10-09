@@ -117,6 +117,24 @@ Lineage 集成的目标应用应设为 `false`。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
 脚本验证已知配置字段；未知字段或不支持的 JSON 转义会中止写入并保留原配置。
 
+## 内核侧路径隐藏（可选）
+
+`scripts/patch-kernel.sh` 负责模块不再触碰的文件指纹部分：对应用进程
+（uid≥10000）重写 procfs 输出的路径字符串，使 `/proc/<pid>/fd/*`、
+`/proc/<pid>/map_files/*`、`/proc/<pid>/maps`、`smaps`、`numa_maps` 不再出现
+`lineage`、`crdroid` 等关键词。脚本按函数定位（`do_proc_readlink()`、
+`seq_file_path()`）而非行号，且幂等，兼容带 vendor/SUSFS 改动的源码树：
+
+```bash
+scripts/patch-kernel.sh /path/to/kernel          # 应用
+scripts/patch-kernel.sh --check /path/to/kernel  # 仅报告状态
+scripts/patch-kernel.sh --revert /path/to/kernel # 撤销
+```
+
+脚本写入 `include/linux/yukari_hide.h`，修改过的文件会备份为 `*.yukari.bak`。
+应用后需重新编译并刷入内核。补丁只改显示字符串，不影响文件访问、`stat` 结果
+与资源系统。
+
 ## 分阶段验证
 
 对应的实现也可以分阶段启用：
