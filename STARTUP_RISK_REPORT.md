@@ -250,14 +250,15 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
 
 ## 11. 追加 ROM 信号通道（2.0）
 
-除 ServiceManager 外，2.0 版按需在目标进程内隐藏另外三类 LineageOS 信号，均默认
-关闭、等长改写、不修改系统镜像：
+除 ServiceManager 外，2.0 版按需在目标进程内隐藏另外四类 LineageOS 信号，均默认
+开启、等长改写或返回值过滤、不修改系统镜像：
 
 | 通道 | 开关 | 钩子 | 已知边界 |
 | --- | --- | --- | --- |
 | 资源包 | `hide_lineage_resources` | `AssetManager` native 名称/ID 查询 | Android 9+ 才有对应签名；包列表与 SDK 类仍可见 |
 | 系统 feature | `hide_lineage_features` | `IPackageManager.hasSystemFeature` 请求改写；`Parcel.nativeReadString8/16` 返回等长占位串 | 依赖 feature 的 Lineage 集成会降级 |
 | 受保护广播 | `hide_lineage_broadcasts` | 复制 `IActivityManager` 广播请求并替换 10 个 lineage Action | `PendingIntent` 代发不经过应用事务 |
+| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | 只覆盖结构化目录/反射 API；`Runtime.exec`/native 直读不覆盖 |
 
 本轮验证确认了两条硬约束：
 

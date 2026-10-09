@@ -43,6 +43,9 @@ length-preserving):
 - **Protected broadcasts** — outbound `IActivityManager` broadcast requests are
   copied and the ten lineage protected actions replaced, so sends succeed
   silently instead of raising `SecurityException`.
+- **Filesystem fingerprints** — ROM-named entries are removed from system
+  directory listings (RRO overlays, permission XMLs, platform resources) and
+  reflection on `AssetManager.LINEAGE_APK_PATH` is hidden.
 
 Module updates require a reboot: Zygisk keeps the module `.so` mapped in
 zygote, and replacing the file under a live mapping crashes the process.
@@ -68,6 +71,7 @@ Device-level startup and detector regression checks remain necessary.
   "hide_lineage_resources": true,
   "hide_lineage_features": true,
   "hide_lineage_broadcasts": true,
+  "hide_lineage_files": true,
   "targets": ["com.example.app"]
 }
 ```
@@ -102,6 +106,14 @@ AOSP (accepted with no receiver) instead of raising `SecurityException`, which
 would otherwise fingerprint the ROM. The action is replaced by an equal-length
 placeholder in a private request copy, so the app's own Intent is untouched;
 set the flag to `false` for targets that rely on sending these actions.
+
+Set `hide_lineage_files` to `true` (default) to hide LineageOS filesystem
+fingerprints inside target processes: ROM-named entries are removed from
+directory listings of system paths (`/system`, `/product`, `/vendor`, `/odm`,
+`/apex`, ...), covering the `framework-res__lineage_*` RRO overlay, the
+`org.lineageos.*.xml` permission files and the platform resource APK; reflection
+on `android.content.res.AssetManager.LINEAGE_APK_PATH` throws
+`NoSuchFieldException`. The files on disk are untouched.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -149,3 +161,8 @@ With `hide_lineage_broadcasts` enabled, sending
 silently instead of raising `SecurityException`, and the module log shows
 `scrubbed N lineage broadcast action(s)`; a non-target app must still be
 rejected.
+
+With `hide_lineage_files` enabled, `new File("/product/overlay").list()` in a
+target process must not contain Lineage-named overlays and
+`AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` must throw
+`NoSuchFieldException`; a non-target app must still see both.

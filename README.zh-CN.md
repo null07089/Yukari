@@ -36,17 +36,18 @@ GOT 槽直接指向模块 `.text`。
 
 ### 追加 ROM 信号通道
 
-除 ServiceManager 外，目标进程默认启用三条独立通道，全部只作用于目标进程、
-只做等长改写、不修改系统镜像：
+除 ServiceManager 外，目标进程默认启用四条独立通道，全部只作用于目标进程、
+只做等长改写或返回值过滤、不修改系统镜像：
 
 | 通道 | 钩子位置 | 效果 | 已知边界 |
 | --- | --- | --- | --- |
 | 资源包 | `AssetManager` native 名称/ID 查询 | `lineageos.platform`（资源包 id `0x3f`）按不存在处理 | 需要 Android 9+；包列表与 SDK 类仍可见 |
 | 系统 feature | `IPackageManager.hasSystemFeature` 请求改写 + `Parcel.nativeReadString8/16` 返回值替换 | `hasSystemFeature` 返回 `false`，枚举结果为等长占位符 | 依赖 `org.lineageos.*` 决定自身集成的应用会降级 |
 | 受保护广播 | 复制 `IActivityManager` 广播请求并等长替换 10 个 lineage Action | 发送不再抛 `SecurityException`，等同 AOSP 静默成功 | `PendingIntent` 代发路径不经过应用事务，不在覆盖内 |
+| 文件指纹 | `UnixFileSystem.list0` 列表过滤 + `Class` 字段反射隐藏 | 系统目录不再出现 ROM 命名文件；`LINEAGE_APK_PATH` 反射不可见 | 只覆盖结构化目录/反射 API；`Runtime.exec` 或 native 直读不走这些入口 |
 
 **更新模块后必须重启设备**：zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
-新旧页混用并导致 zygote 崩溃。三条通道默认开启，可按目标关闭，风险见下节配置说明。
+新旧页混用并导致 zygote 崩溃。四条通道默认开启，可按目标关闭，风险见下节配置说明。
 
 ## 可观察特征取舍
 
@@ -73,6 +74,7 @@ GOT 槽直接指向模块 `.text`。
   "hide_lineage_resources": true,
   "hide_lineage_features": true,
   "hide_lineage_broadcasts": true,
+  "hide_lineage_files": true,
   "targets": ["com.example.app"]
 }
 ```
@@ -106,6 +108,13 @@ Lineage 集成的目标应用应设为 `false`。
 而是像 AOSP 一样静默成功（无接收者）；Action 在私有请求副本里被等长占位符替换，
 应用自身的 Intent 不受影响。默认为 `true`；如有目标依赖发送这些 Action，可设为
 `false`。
+
+`hide_lineage_files` 设为 `true`（默认）时，会隐藏目标进程内的 Lineage 文件指纹：
+`/system`、`/product`、`/vendor`、`/odm`、`/apex` 等系统路径的目录列表中，文件名
+含 ROM 关键词的条目会被剔除——包括 `framework-res__lineage_*` RRO overlay、
+`org.lineageos.*.xml` 权限文件、`org.lineageos.platform-res.apk`；对
+`android.content.res.AssetManager.LINEAGE_APK_PATH` 的反射查询会抛
+`NoSuchFieldException`。磁盘文件本身不做改动，应用数据目录不受影响。
 
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
@@ -191,3 +200,9 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    目标应用内 `sendBroadcast(new Intent("lineageos.intent.action.REFRESH_PREFERENCE"))`
    不应抛 `SecurityException`，logcat 出现 `scrubbed N lineage broadcast action(s)`；
    非目标对照应用发送同一 Action 仍应被系统拒绝。
+
+9. **文件指纹验证**（`hide_lineage_files: true`）
+
+   目标应用内 `new File("/product/overlay").list()` 不应再出现含 `lineage` 的
+   overlay 文件名；`AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` 应抛
+   `NoSuchFieldException`；非目标对照应用仍能看到两者。

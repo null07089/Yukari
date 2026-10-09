@@ -1,6 +1,7 @@
 #include "binder_hook.h"
 #include "config.h"
 #include "logger.h"
+#include "path_hook.h"
 #include "resource_hook.h"
 #include "service_cache.h"
 #include "zygisk.hpp"
@@ -63,6 +64,7 @@ public:
         g_enabled_for_process = false;
         g_jni_hook_ready_ = false;
         g_resource_hook_ready_ = false;
+        g_path_hook_ready_ = false;
         g_package_name.fill('\0');
         if (!args) return;
 
@@ -102,6 +104,14 @@ public:
                 log_error("resource hook setup failed; resources stay visible");
             }
         }
+        if (g_config->hide_lineage_files) {
+            try {
+                g_path_hook_ready_ = install_path_hooks(env_, api_);
+            } catch (...) {
+                g_path_hook_ready_ = false;
+                log_error("path hook setup failed; file fingerprints stay visible");
+            }
+        }
         log_info("matched target %s", g_package_name.data());
     }
 
@@ -139,6 +149,7 @@ private:
     JNIEnv *env_ = nullptr;
     bool g_jni_hook_ready_ = false;
     bool g_resource_hook_ready_ = false;
+    bool g_path_hook_ready_ = false;
 };
 
 REGISTER_ZYGISK_MODULE(YukariModule)

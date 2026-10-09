@@ -54,3 +54,10 @@ bool hide_service(const std::string &service_name) {
     }
     return false;
 }
+
+bool contains_rom_keyword(const std::string &value) {
+    for (const char *keyword : kKeywords) {
+        if (contains_ci(value, keyword)) return true;
+    }
+    return false;
+}
