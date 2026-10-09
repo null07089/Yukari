@@ -258,7 +258,13 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
 | 资源包 | `hide_lineage_resources` | `AssetManager` native 名称/ID 查询 | Android 9+ 才有对应签名；包列表与 SDK 类仍可见 |
 | 系统 feature | `hide_lineage_features` | `IPackageManager.hasSystemFeature` 请求改写；`Parcel.nativeReadString8/16` 返回等长占位串 | 依赖 feature 的 Lineage 集成会降级 |
 | 受保护广播 | `hide_lineage_broadcasts` | 复制 `IActivityManager` 广播请求并替换 10 个 lineage Action | `PendingIntent` 代发不经过应用事务 |
-| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`readlink`/`readSymbolicLink` 目标清洗；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | native 直读 libc readlink 与 zygote 继承的 fd 不覆盖 |
+| ~~文件指纹~~ | ~~`hide_lineage_files`~~ | 2.1 起移除 | 见下 |
+
+2.1 起撤掉文件指纹通道：`UnixFileSystem.list0` 列表过滤、`readlink` 清洗与
+`AssetManager.LINEAGE_APK_PATH` 反射隐藏对 native 检测无效（native 直读 libc），
+而 `/proc/self/fd`、`/proc/self/maps` 的路径暴露已由内核层 procfs 清洗覆盖
+（按应用 UID 等长改写）；路径不可见性由 SUSFS 负责。模块只保留资源、feature、
+广播与 ServiceManager 四类信号。
 
 本轮验证确认了两条硬约束：
 

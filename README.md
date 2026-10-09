@@ -71,7 +71,6 @@ Device-level startup and detector regression checks remain necessary.
   "hide_lineage_resources": true,
   "hide_lineage_features": true,
   "hide_lineage_broadcasts": true,
-  "hide_lineage_files": true,
   "targets": ["com.example.app"]
 }
 ```
@@ -106,19 +105,6 @@ AOSP (accepted with no receiver) instead of raising `SecurityException`, which
 would otherwise fingerprint the ROM. The action is replaced by an equal-length
 placeholder in a private request copy, so the app's own Intent is untouched;
 set the flag to `false` for targets that rely on sending these actions.
-
-Set `hide_lineage_files` to `true` (default) to hide LineageOS filesystem
-fingerprints inside target processes: ROM-named entries are removed from
-directory listings of system paths (`/system`, `/product`, `/vendor`, `/odm`,
-`/apex`, ...), covering the `framework-res__lineage_*` RRO overlay, the
-`org.lineageos.*.xml` permission files and the platform resource APK;
-`readlink()`/`Files.readSymbolicLink()` results are scrubbed as well, so
-enumerating `/proc/self/fd` through those Java entry points cannot reveal
-lineage-named open files. Descriptors inherited from zygote stay open because
-ZipArchive owns them and fdsan aborts the process if they are closed, so a
-native scanner that calls libc readlink directly can still observe them.
-Reflection on `android.content.res.AssetManager.LINEAGE_APK_PATH` throws
-`NoSuchFieldException`. The files on disk are untouched.
 
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
@@ -167,11 +153,7 @@ silently instead of raising `SecurityException`, and the module log shows
 `scrubbed N lineage broadcast action(s)`; a non-target app must still be
 rejected.
 
-With `hide_lineage_files` enabled, `new File("/product/overlay").list()` in a
-target process must not contain Lineage-named overlays,
-`AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` must throw
-`NoSuchFieldException`, and resolving `/proc/self/fd/*` with
-`Files.readSymbolicLink()` or `Os.readlink()` must not return a path containing
-`lineage`; a non-target app must still see all of them. Descriptors inherited
-from zygote are owned by ZipArchive and must not be closed (fdsan aborts the
-process); scanners that read them through libc remain a known gap.
+Filesystem fingerprints (`/proc/self/fd` targets, `/proc/self/maps` entries,
+ROM-named directory entries) are outside the module's scope. They are hidden at
+the kernel level on devices whose kernel scrubs ROM names from procfs path
+output for application UIDs.

@@ -177,7 +177,6 @@ bool load_config(YukariConfig &out) {
     parse_bool(text, "hide_lineage_resources", out.hide_lineage_resources);
     parse_bool(text, "hide_lineage_features", out.hide_lineage_features);
     parse_bool(text, "hide_lineage_broadcasts", out.hide_lineage_broadcasts);
-    parse_bool(text, "hide_lineage_files", out.hide_lineage_files);
     out.targets = parse_targets(text);
     return true;
 }

@@ -18,9 +18,6 @@ struct YukariConfig {
     // Rewrite the lineage protected-broadcast actions in outbound broadcasts so
     // sending them is no longer rejected on LineageOS.
     bool hide_lineage_broadcasts = true;
-    // Hide LineageOS filesystem fingerprints: ROM-named entries in system
-    // directory listings and the AssetManager.LINEAGE_APK_PATH field.
-    bool hide_lineage_files = true;
     std::vector<std::string> targets;
 };
 

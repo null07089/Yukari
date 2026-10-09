@@ -55,31 +55,3 @@ bool hide_service(const std::string &service_name) {
     }
     return false;
 }
-
-bool contains_rom_keyword(const std::string &value) {
-    for (const char *keyword : kKeywords) {
-        if (contains_ci(value, keyword)) return true;
-    }
-    return false;
-}
-
-std::size_t scrub_rom_keywords(char *buffer, std::size_t length) {
-    if (!buffer || length == 0) return 0;
-    std::size_t hits = 0;
-    for (const char *keyword : kKeywords) {
-        const std::size_t keyword_length = std::char_traits<char>::length(keyword);
-        if (keyword_length == 0 || keyword_length > length) continue;
-        for (std::size_t i = 0; i + keyword_length <= length; ++i) {
-            std::size_t j = 0;
-            for (; j < keyword_length; ++j) {
-                if (ascii_lower(buffer[i + j]) != keyword[j]) break;
-            }
-            if (j == keyword_length) {
-                std::memset(buffer + i, '_', keyword_length);
-                ++hits;
-                i += keyword_length - 1;
-            }
-        }
-    }
-    return hits;
-}

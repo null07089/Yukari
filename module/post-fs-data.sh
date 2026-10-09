@@ -11,7 +11,6 @@ if [ ! -f "$CONFIG" ]; then
   "hide_lineage_resources": true,
   "hide_lineage_features": true,
   "hide_lineage_broadcasts": true,
-  "hide_lineage_files": true,
   "targets": []
 }
 EOF
