@@ -1,7 +1,11 @@
 #include "path_hook.h"
 
+#include <climits>
+#include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "logger.h"
@@ -387,4 +391,31 @@ bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
     log_info("path hooks installed (%d/8); ROM file names, readlink targets and %s hidden",
              installed, kHiddenField);
     return true;
+}
+
+void close_leaked_rom_fds() {
+    DIR *dir = opendir("/proc/self/fd");
+    if (!dir) return;
+    const int dir_fd = dirfd(dir);
+    int closed = 0;
+    struct dirent *entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        const char *name = entry->d_name;
+        if (!name || name[0] < '0' || name[0] > '9') continue;
+        char *end = nullptr;
+        const long fd = std::strtol(name, &end, 10);
+        if (!end || *end != '\0' || fd < 0) continue;
+        if (static_cast<int>(fd) == dir_fd) continue;
+        char target[PATH_MAX + 1]{};
+        const ssize_t length = readlinkat(dir_fd, name, target, PATH_MAX);
+        if (length <= 0 || length > PATH_MAX) continue;
+        target[length] = '\0';
+        if (!contains_rom_keyword(std::string(target, static_cast<size_t>(length)))) continue;
+        if (close(static_cast<int>(fd)) == 0) {
+            ++closed;
+            log_info("closed leaked ROM fd %ld (%s)", fd, target);
+        }
+    }
+    closedir(dir);
+    if (closed > 0) log_info("closed %d leaked ROM file descriptor(s)", closed);
 }

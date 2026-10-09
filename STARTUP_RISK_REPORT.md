@@ -258,7 +258,7 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
 | 资源包 | `hide_lineage_resources` | `AssetManager` native 名称/ID 查询 | Android 9+ 才有对应签名；包列表与 SDK 类仍可见 |
 | 系统 feature | `hide_lineage_features` | `IPackageManager.hasSystemFeature` 请求改写；`Parcel.nativeReadString8/16` 返回等长占位串 | 依赖 feature 的 Lineage 集成会降级 |
 | 受保护广播 | `hide_lineage_broadcasts` | 复制 `IActivityManager` 广播请求并替换 10 个 lineage Action | `PendingIntent` 代发不经过应用事务 |
-| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`readlink`/`readSymbolicLink` 目标清洗；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | 只覆盖结构化目录/反射/readlink API；`Runtime.exec`/native 直读不覆盖 |
+| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`readlink`/`readSymbolicLink` 目标清洗；关闭 zygote 继承的 ROM fd；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | 只覆盖结构化目录/反射/readlink API 与继承 fd；native 自开新 fd 直读不覆盖 |
 
 本轮验证确认了两条硬约束：
 

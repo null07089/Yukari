@@ -15,3 +15,9 @@
 // Call in preAppSpecialize for target processes only.  Returns false when no
 // entry point could be hooked.
 bool install_path_hooks(JNIEnv *env, zygisk::Api *api);
+
+// Closes file descriptors inherited from zygote that point at ROM-named files.
+// Path hiding (SUSFS, mount tricks) does not cover already-open descriptors,
+// and detectors enumerate /proc/self/fd to find them.  Call this in
+// postAppSpecialize for target processes only, before application code runs.
+void close_leaked_rom_fds();

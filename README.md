@@ -113,7 +113,10 @@ directory listings of system paths (`/system`, `/product`, `/vendor`, `/odm`,
 `/apex`, ...), covering the `framework-res__lineage_*` RRO overlay, the
 `org.lineageos.*.xml` permission files and the platform resource APK;
 `readlink()`/`Files.readSymbolicLink()` results are scrubbed as well, so
-enumerating `/proc/self/fd` cannot reveal lineage-named open files; reflection
+enumerating `/proc/self/fd` cannot reveal lineage-named open files; file
+descriptors inherited from zygote that point at ROM-named files are closed
+before application code runs (path hiding such as SUSFS cannot cover open
+descriptors); reflection
 on `android.content.res.AssetManager.LINEAGE_APK_PATH` throws
 `NoSuchFieldException`. The files on disk are untouched.
 
@@ -167,6 +170,9 @@ rejected.
 With `hide_lineage_files` enabled, `new File("/product/overlay").list()` in a
 target process must not contain Lineage-named overlays,
 `AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` must throw
-`NoSuchFieldException`, and resolving `/proc/self/fd/*` with
+`NoSuchFieldException`, resolving `/proc/self/fd/*` with
 `Files.readSymbolicLink()` or `Os.readlink()` must not return a path containing
-`lineage`; a non-target app must still see all of them.
+`lineage`, and `/proc/self/fd` must not contain descriptors inherited from
+zygote that point at ROM-named files (the module log shows
+`closed N leaked ROM file descriptor(s)`); a non-target app must still see all
+of them.
