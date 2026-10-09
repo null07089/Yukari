@@ -6,6 +6,24 @@ ServiceManager 服务信号。固定匹配关键字为 `lineage`、`crdroid`、`
 默认还会在目标进程内隐藏 `lineageos.platform` 资源包、
 `org.lineageos.*` 系统 feature 以及 Lineage 受保护广播 Action（均可在配置中关闭）。
 
+## 与 SUSFS 搭配（重要）
+
+模块只改变目标进程内“能看到什么”，管不了内核对外报告的内容：已经打开的 fd、
+系统级路径可见性和系统属性都不在它作用范围内。这部分依赖 KernelSU 内核上的
+SUSFS，模块已内置配套胶水：
+
+- 模块内置 `ksu_susfs`，`service.sh` 每次开机把带 ROM 关键词的文件注册为
+  `add_sus_path`（目录列表与路径查询），把其映射与 idmap 注册为 `add_sus_map`，
+  并用 `resetprop` 删除或清洗含 `lineage` 的系统属性；
+- 同一脚本把模块自身的 `zygisk/arm64-v8a.so` 与 Zygisk 库从应用进程的
+  `/proc/self/maps` 中隐藏；
+- SUSFS 会让注册过的路径对应用完全不可见，覆盖进程内钩子触及不到的目录视图。
+
+从 zygote 继承的 fd（`/proc/<pid>/fd/*` 的 readlink 目标）SUSFS 单独不覆盖，
+需要 [内核侧路径隐藏](#内核侧路径隐藏可选) 的补丁。没有 SUSFS 时，模块仍能隐藏
+ServiceManager、资源包、feature、广播与 `LINEAGE_APK_PATH` 反射字段，但 native
+文件/属性扫描仍可能识别出 ROM。
+
 ## 实现策略
 
 目标进程在 `preAppSpecialize` 注册 `android.os.BinderProxy.transactNative`
@@ -44,10 +62,11 @@ GOT 槽直接指向模块 `.text`。
 | 资源包 | `AssetManager` native 名称/ID 查询 | `lineageos.platform`（资源包 id `0x3f`）按不存在处理 | 需要 Android 9+；包列表与 SDK 类仍可见 |
 | 系统 feature | `IPackageManager.hasSystemFeature` 请求改写 + `Parcel.nativeReadString8/16` 返回值替换 | `hasSystemFeature` 返回 `false`，枚举结果为等长占位符 | 依赖 `org.lineageos.*` 决定自身集成的应用会降级 |
 | 受保护广播 | 复制 `IActivityManager` 广播请求并等长替换 10 个 lineage Action | 发送不再抛 `SecurityException`，等同 AOSP 静默成功 | `PendingIntent` 代发路径不经过应用事务，不在覆盖内 |
-| 文件指纹 | `UnixFileSystem.list0` 列表过滤 + `readlink`/`readSymbolicLink` 目标清洗 + `Class` 字段反射隐藏 | 系统目录不再出现 ROM 命名文件；两条 Java readlink 入口结果不含关键词；`LINEAGE_APK_PATH` 反射不可见 | native 直读 libc `readlink`、以及 zygote 继承的 fd 不覆盖 |
+| 反射常量 | `Class` 反射查询过滤 `AssetManager.LINEAGE_APK_PATH` | `getDeclaredField` 抛 `NoSuchFieldException`，`getDeclaredFields` 列表剔除该字段 | 仅覆盖 Java 反射路径；文件/映射/属性指纹由 SUSFS 与内核补丁负责 |
 
 **更新模块后必须重启设备**：zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
 新旧页混用并导致 zygote 崩溃。四条通道默认开启，可按目标关闭，风险见下节配置说明。
+文件、映射与属性指纹不在进程内钩子的覆盖内，请务必搭配 SUSFS（见“与 SUSFS 搭配”）。
 
 ## 可观察特征取舍
 

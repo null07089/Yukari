@@ -266,6 +266,11 @@ procfs 清洗按应用 UID 覆盖，路径不可见性由 SUSFS 负责）；2.2 
 隐藏，其余文件指纹不归模块负责。内核补丁已脚本化为 `scripts/patch-kernel.sh`
 （按函数语义定位、幂等、支持 `--check`/`--revert`，适配不同设备内核树）。
 
+2.3 起模块内置 `ksu_susfs`，`service.sh` 在开机时注册 sus_path/sus_map 并清理
+lineage 属性，把文件路径、映射与属性三类指纹交给 SUSFS；与 SUSFS 内核搭配是
+完整隐藏的前提，缺省情况下模块仍覆盖 ServiceManager/资源/feature/广播/反射五类
+进程内信号。
+
 本轮验证确认了两条硬约束：
 
 - **不要写 Binder 回复 Parcel。** 回复可能是指向 binder 缓冲区的 data-reference，

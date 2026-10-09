@@ -75,6 +75,7 @@ set_perm "$MODPATH/action.sh" 0 0 0755
 set_perm "$MODPATH/customize.sh" 0 0 0755
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755
 set_perm "$MODPATH/service.sh" 0 0 0755
+set_perm "$MODPATH/ksu_susfs" 0 0 0755
 set_perm "$MODPATH/config.json" 0 0 0644
 
 ui_print "- Installation complete"

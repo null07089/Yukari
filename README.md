@@ -8,6 +8,29 @@ resource package, the `org.lineageos.*` system features and the LineageOS
 protected-broadcast actions inside target processes; each channel can be
 disabled in the configuration.
 
+## Pairing with SUSFS (important)
+
+Yukari only changes what a target process can observe; it cannot change what
+the kernel reports about files that are already open, nor hide paths, mappings
+and properties system-wide. SUSFS on a KernelSU kernel provides that half, and
+the module ships the glue for it:
+
+- `service.sh` runs at every boot and uses the bundled `ksu_susfs` binary to
+  register lineage-named files with `add_sus_path` (directory listings and path
+  lookups), their mappings and idmaps with `add_sus_map`, and to delete or
+  scrub lineage system properties with `resetprop`;
+- the same script hides the module's own `zygisk/arm64-v8a.so` and the Zygisk
+  library from application `/proc/self/maps`;
+- SUSFS then keeps all registered paths invisible to applications, covering
+  the directory and path views that in-process hooks cannot reach.
+
+`/proc/<pid>/fd/*` readlink targets (descriptors inherited from zygote) are not
+covered by SUSFS alone; apply the kernel patch from
+[Kernel-side path hiding](#kernel-side-path-hiding-optional). Without SUSFS the
+module still hides ServiceManager entries, the resource package, system
+features, protected broadcasts and the `LINEAGE_APK_PATH` reflection field, but
+native file and property scanners can still fingerprint the ROM.
+
 The preferred implementation hooks `android.os.BinderProxy.transactNative` via
 Zygisk's JNI hook API. ServiceManager enumeration/debug replies are filtered at
 the Parcel layer. Matching direct `getService`/`checkService` lookups (including
@@ -31,9 +54,8 @@ placeholders; the caller's original Parcel and the reply layout remain intact.
 The legacy ioctl fallback still filters enumeration only, without direct
 lookup redirection or Java caller classification.
 
-Beyond ServiceManager, each target process also hides three additional
-ROM-signal channels (all enabled by default, all process-local and
-length-preserving):
+Beyond ServiceManager, each target process also hides four additional
+ROM-signal channels (all process-local and length-preserving):
 
 - **Resource package** — AssetManager name/ID lookups treat `lineageos.platform`
   (resource package id `0x3f`) as absent; requires the Android 9+ entry points.
@@ -43,9 +65,12 @@ length-preserving):
 - **Protected broadcasts** — outbound `IActivityManager` broadcast requests are
   copied and the ten lineage protected actions replaced, so sends succeed
   silently instead of raising `SecurityException`.
-- **Filesystem fingerprints** — ROM-named entries are removed from system
-  directory listings (RRO overlays, permission XMLs, platform resources) and
-  reflection on `AssetManager.LINEAGE_APK_PATH` is hidden.
+- **Reflection constant** — `AssetManager.LINEAGE_APK_PATH` is removed from
+  reflection: `Class.getDeclaredField` throws `NoSuchFieldException` and the
+  `getDeclaredFields` family omits the entry.
+
+File, mapping and property fingerprints are handled together with SUSFS; see
+[Pairing with SUSFS](#pairing-with-susfs-important).
 
 Module updates require a reboot: Zygisk keeps the module `.so` mapped in
 zygote, and replacing the file under a live mapping crashes the process.
