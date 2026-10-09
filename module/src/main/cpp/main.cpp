@@ -1,5 +1,6 @@
 #include "binder_hook.h"
 #include "config.h"
+#include "field_hook.h"
 #include "logger.h"
 #include "resource_hook.h"
 #include "service_cache.h"
@@ -101,6 +102,11 @@ public:
                 g_resource_hook_ready_ = false;
                 log_error("resource hook setup failed; resources stay visible");
             }
+        }
+        try {
+            install_field_hooks(env_, api_);
+        } catch (...) {
+            log_error("field hook setup failed; LINEAGE_APK_PATH stays visible");
         }
         log_info("matched target %s", g_package_name.data());
     }

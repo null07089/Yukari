@@ -108,6 +108,11 @@ Lineage 集成的目标应用应设为 `false`。
 应用自身的 Intent 不受影响。默认为 `true`；如有目标依赖发送这些 Action，可设为
 `false`。
 
+`AssetManager.LINEAGE_APK_PATH` 会从反射中隐藏：目标进程内
+`Class.getDeclaredField("LINEAGE_APK_PATH")` 抛 `NoSuchFieldException`，
+`Class.getField(...)` 认为不存在该公开字段，`getDeclaredFields` 系列返回的列表
+中也会剔除该字段；类本身与系统镜像不变。
+
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
 Magisk 管理器没有终端时，音量上键全选合并、音量下键进入逐包选择；超时保持原文件。
 脚本验证已知配置字段；未知字段或不支持的 JSON 转义会中止写入并保留原配置。
@@ -193,5 +198,11 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    不应抛 `SecurityException`，logcat 出现 `scrubbed N lineage broadcast action(s)`；
    非目标对照应用发送同一 Action 仍应被系统拒绝。
 
-文件指纹（`/proc/self/fd` 目标、`/proc/self/maps` 条目、含 ROM 关键词的目录项）
+9. **反射常量验证**（内置）
+
+   目标应用内 `AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` 应抛
+   `NoSuchFieldException`，`getDeclaredFields()` 列表中不应出现该字段；非目标对照
+   应用仍能看到它。
+
+文件路径暴露（`/proc/self/fd` 目标、`/proc/self/maps` 条目、含 ROM 关键词的目录项）
 不在模块职责内；在会针对应用 UID 清洗 procfs 路径输出的内核上由内核层隐藏。

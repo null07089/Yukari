@@ -106,6 +106,12 @@ would otherwise fingerprint the ROM. The action is replaced by an equal-length
 placeholder in a private request copy, so the app's own Intent is untouched;
 set the flag to `false` for targets that rely on sending these actions.
 
+`AssetManager.LINEAGE_APK_PATH` is hidden from reflection in target processes:
+`Class.getDeclaredField("LINEAGE_APK_PATH")` throws `NoSuchFieldException`,
+`Class.getField(...)` sees no such public field, and the `getDeclaredFields`
+family omits the entry, so reflection-based ROM probes behave as on AOSP. The
+class itself and the system image are untouched.
+
 Run `module/action.sh` (installed as `/data/adb/modules/Yukari/action.sh`) to
 select targets. `a` merges all discovered third-party apps, `s` merges selected
 numbers, `r` replaces targets, `k` preserves the current list, and `q` cancels.
@@ -153,7 +159,11 @@ silently instead of raising `SecurityException`, and the module log shows
 `scrubbed N lineage broadcast action(s)`; a non-target app must still be
 rejected.
 
-Filesystem fingerprints (`/proc/self/fd` targets, `/proc/self/maps` entries,
-ROM-named directory entries) are outside the module's scope. They are hidden at
-the kernel level on devices whose kernel scrubs ROM names from procfs path
-output for application UIDs.
+Reflection on `android.content.res.AssetManager.LINEAGE_APK_PATH` must throw
+`NoSuchFieldException` in a target process and the field must be absent from
+`getDeclaredFields()`; a non-target app must still see it.
+
+File path exposure (`/proc/self/fd` targets, `/proc/self/maps` entries, ROM-named
+directory entries) is outside the module's scope. It is hidden at the kernel
+level on devices whose kernel scrubs ROM names from procfs path output for
+application UIDs.
