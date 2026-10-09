@@ -44,7 +44,7 @@ GOT 槽直接指向模块 `.text`。
 | 资源包 | `AssetManager` native 名称/ID 查询 | `lineageos.platform`（资源包 id `0x3f`）按不存在处理 | 需要 Android 9+；包列表与 SDK 类仍可见 |
 | 系统 feature | `IPackageManager.hasSystemFeature` 请求改写 + `Parcel.nativeReadString8/16` 返回值替换 | `hasSystemFeature` 返回 `false`，枚举结果为等长占位符 | 依赖 `org.lineageos.*` 决定自身集成的应用会降级 |
 | 受保护广播 | 复制 `IActivityManager` 广播请求并等长替换 10 个 lineage Action | 发送不再抛 `SecurityException`，等同 AOSP 静默成功 | `PendingIntent` 代发路径不经过应用事务，不在覆盖内 |
-| 文件指纹 | `UnixFileSystem.list0` 列表过滤 + `readlink`/`readSymbolicLink` 目标清洗 + 关闭 zygote 继承的 ROM fd + `Class` 字段反射隐藏 | 系统目录不再出现 ROM 命名文件；`/proc/self/fd` 无相关 fd、readlink 结果不含关键词；`LINEAGE_APK_PATH` 反射不可见 | 只覆盖结构化目录/反射/readlink API 与继承 fd；native 自开新 fd 直读不覆盖 |
+| 文件指纹 | `UnixFileSystem.list0` 列表过滤 + `readlink`/`readSymbolicLink` 目标清洗 + `Class` 字段反射隐藏 | 系统目录不再出现 ROM 命名文件；两条 Java readlink 入口结果不含关键词；`LINEAGE_APK_PATH` 反射不可见 | native 直读 libc `readlink`、以及 zygote 继承的 fd 不覆盖 |
 
 **更新模块后必须重启设备**：zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
 新旧页混用并导致 zygote 崩溃。四条通道默认开启，可按目标关闭，风险见下节配置说明。
@@ -113,10 +113,11 @@ Lineage 集成的目标应用应设为 `false`。
 `/system`、`/product`、`/vendor`、`/odm`、`/apex` 等系统路径的目录列表中，文件名
 含 ROM 关键词的条目会被剔除——包括 `framework-res__lineage_*` RRO overlay、
 `org.lineageos.*.xml` 权限文件、`org.lineageos.platform-res.apk`；同时
-`readlink()`/`Files.readSymbolicLink()` 返回的目标路径也会被等长清洗，遍历
-`/proc/self/fd` 无法再暴露带 lineage 的已打开文件；从 zygote 继承、指向 ROM
-命名文件的 fd 会在应用代码运行前被关闭（SUSFS 等路径隐藏无法覆盖已打开的 fd）；
-对 `android.content.res.AssetManager.LINEAGE_APK_PATH` 的反射查询会抛
+`readlink()`/`Files.readSymbolicLink()` 返回的目标路径也会被等长清洗，通过这两条
+Java 入口遍历 `/proc/self/fd` 无法再暴露带 lineage 的已打开文件。从 zygote 继承的
+fd 由 ZipArchive 持有，外部 `close()` 会触发 fdsan 中止进程，因此 native 直接调用
+libc `readlink` 的扫描仍属于已知缺口。对
+`android.content.res.AssetManager.LINEAGE_APK_PATH` 的反射查询会抛
 `NoSuchFieldException`。磁盘文件本身不做改动，应用数据目录不受影响。
 
 运行模块 action 可通过序号合并或替换 targets，`a` 为全选合并、`k` 保留、`q` 取消。
@@ -209,6 +210,6 @@ Magisk 管理器没有终端时，音量上键全选合并、音量下键进入�
    目标应用内 `new File("/product/overlay").list()` 不应再出现含 `lineage` 的
    overlay 文件名；`AssetManager.class.getDeclaredField("LINEAGE_APK_PATH")` 应抛
    `NoSuchFieldException`；遍历 `/proc/self/fd` 并用 `Files.readSymbolicLink()`
-   或 `Os.readlink()` 解析时，返回路径不应含 `lineage`，且 `/proc/self/fd` 中
-   不应再有从 zygote 继承的 ROM 命名文件描述符（logcat 出现
-   `closed N leaked ROM file descriptor(s)`）；非目标对照应用仍能看到以上全部。
+   或 `Os.readlink()` 解析时，返回路径不应含 `lineage`；非目标对照应用仍能看到
+   以上全部。注意：从 zygote 继承的 fd 由 ZipArchive 持有，**不可外部 close**
+   （fdsan 会中止进程），native 直读 libc 的扫描属于已知缺口。

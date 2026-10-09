@@ -133,16 +133,6 @@ public:
             // optional instrumentation abort application startup.
             log_error("fallback hook setup failed; continuing without fallback");
         }
-        if (g_config && g_config->hide_lineage_files) {
-            try {
-                // Path hiding cannot cover descriptors inherited from zygote;
-                // close the ROM-named ones before application code can scan
-                // /proc/self/fd.
-                close_leaked_rom_fds();
-            } catch (...) {
-                log_error("leaked ROM fd cleanup failed; continuing");
-            }
-        }
         log_info("enabled for %s (resource hide=%d)", g_package_name.data(),
                  g_resource_hook_ready_ ? 1 : 0);
     }

@@ -258,7 +258,7 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
 | 资源包 | `hide_lineage_resources` | `AssetManager` native 名称/ID 查询 | Android 9+ 才有对应签名；包列表与 SDK 类仍可见 |
 | 系统 feature | `hide_lineage_features` | `IPackageManager.hasSystemFeature` 请求改写；`Parcel.nativeReadString8/16` 返回等长占位串 | 依赖 feature 的 Lineage 集成会降级 |
 | 受保护广播 | `hide_lineage_broadcasts` | 复制 `IActivityManager` 广播请求并替换 10 个 lineage Action | `PendingIntent` 代发不经过应用事务 |
-| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`readlink`/`readSymbolicLink` 目标清洗；关闭 zygote 继承的 ROM fd；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | 只覆盖结构化目录/反射/readlink API 与继承 fd；native 自开新 fd 直读不覆盖 |
+| 文件指纹 | `hide_lineage_files` | `UnixFileSystem.list0` 列表过滤；`readlink`/`readSymbolicLink` 目标清洗；`Class` 字段反射隐藏 `LINEAGE_APK_PATH` | native 直读 libc readlink 与 zygote 继承的 fd 不覆盖 |
 
 本轮验证确认了两条硬约束：
 
@@ -266,6 +266,11 @@ ServiceManager 直查/枚举、非目标对照和新事务日志。纯 native li
   首版在 `getSystemAvailableFeatures` 回复里原地 `writeString8` 导致多应用在
   `Parcel::writeInt32` 触发 SIGSEGV；feature 枚举已改为在 `Parcel` 读取侧替换返回值，
   广播/服务则改写私有请求副本，均不再触碰回复字节；
+- **不要 close 资源系统持有的 fd。** `/proc/self/fd` 里从 zygote 继承的 lineage
+  overlay/platform-res fd 归 `ZipArchive` 所有，外部 `close()` 会触发
+  `fdsan: attempted to close file descriptor ... owned by ZipArchive` 并 SIGABRT
+  （实测多个目标应用启动即崩溃）；native 直读 libc `readlink` 的 fd 扫描因此成为
+  已知缺口；
 - **更新模块必须重启设备。** zygote 常驻映射模块 `.so`，热替换正在映射的文件会让
   新旧页混用并使 zygote instruction abort；替换 `.so` 后需重启加载新版本。
 

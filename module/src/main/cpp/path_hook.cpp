@@ -1,11 +1,7 @@
 #include "path_hook.h"
 
-#include <climits>
-#include <cstdlib>
 #include <cstring>
-#include <dirent.h>
 #include <string>
-#include <unistd.h>
 #include <vector>
 
 #include "logger.h"
@@ -308,16 +304,22 @@ bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
     clear_jni_exception(env);
 
     int installed = 0;
+    const auto note = [](const char *name, bool ok) {
+        if (!ok) log_error("path hook %s unavailable", name);
+    };
 
     JNINativeMethod list_methods[] = {
         {"list0", "(Ljava/io/File;)[Ljava/lang/String;",
          reinterpret_cast<void *>(hook_list0)},
     };
     api->hookJniNativeMethods(env, "java/io/UnixFileSystem", list_methods, 1);
-    if (list_methods[0].fnPtr && list_methods[0].fnPtr != reinterpret_cast<void *>(hook_list0)) {
+    const bool list_ready = list_methods[0].fnPtr &&
+                            list_methods[0].fnPtr != reinterpret_cast<void *>(hook_list0);
+    if (list_ready) {
         g_original_list0 = reinterpret_cast<ListDirFn>(list_methods[0].fnPtr);
         ++installed;
     }
+    note("UnixFileSystem.list0", list_ready);
 
     JNINativeMethod field_methods[] = {
         {"getDeclaredField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;",
@@ -334,54 +336,79 @@ bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
     api->hookJniNativeMethods(env, "java/lang/Class", field_methods,
                               static_cast<int>(sizeof(field_methods) / sizeof(field_methods[0])));
 
-    if (field_methods[0].fnPtr && field_methods[0].fnPtr !=
-                                      reinterpret_cast<void *>(hook_get_declared_field)) {
+    const bool declared_field_ready =
+        field_methods[0].fnPtr && field_methods[0].fnPtr !=
+                                      reinterpret_cast<void *>(hook_get_declared_field);
+    if (declared_field_ready) {
         g_original_get_declared_field = reinterpret_cast<GetFieldByNameFn>(field_methods[0].fnPtr);
         ++installed;
     }
-    if (field_methods[1].fnPtr && field_methods[1].fnPtr !=
-                                      reinterpret_cast<void *>(hook_get_public_field)) {
+    note("Class.getDeclaredField", declared_field_ready);
+
+    const bool public_field_ready =
+        field_methods[1].fnPtr && field_methods[1].fnPtr !=
+                                      reinterpret_cast<void *>(hook_get_public_field);
+    if (public_field_ready) {
         g_original_get_public_field = reinterpret_cast<GetFieldByNameFn>(field_methods[1].fnPtr);
         ++installed;
     }
-    if (field_methods[2].fnPtr && field_methods[2].fnPtr !=
-                                      reinterpret_cast<void *>(hook_get_declared_fields)) {
+    note("Class.getPublicFieldRecursive", public_field_ready);
+
+    const bool declared_fields_ready =
+        field_methods[2].fnPtr && field_methods[2].fnPtr !=
+                                      reinterpret_cast<void *>(hook_get_declared_fields);
+    if (declared_fields_ready) {
         g_original_get_declared_fields = reinterpret_cast<GetFieldsFn>(field_methods[2].fnPtr);
         ++installed;
     }
-    if (field_methods[3].fnPtr && field_methods[3].fnPtr !=
-                                      reinterpret_cast<void *>(hook_get_declared_fields0)) {
+    note("Class.getDeclaredFields", declared_fields_ready);
+
+    const bool declared_fields0_ready =
+        field_methods[3].fnPtr && field_methods[3].fnPtr !=
+                                      reinterpret_cast<void *>(hook_get_declared_fields0);
+    if (declared_fields0_ready) {
         g_original_get_declared_fields0 =
             reinterpret_cast<GetFieldsBoolFn>(field_methods[3].fnPtr);
         ++installed;
     }
-    if (field_methods[4].fnPtr && field_methods[4].fnPtr !=
-                                      reinterpret_cast<void *>(hook_get_declared_fields_unchecked)) {
+    note("Class.getDeclaredFields0", declared_fields0_ready);
+
+    const bool declared_fields_unchecked_ready =
+        field_methods[4].fnPtr && field_methods[4].fnPtr !=
+                                      reinterpret_cast<void *>(hook_get_declared_fields_unchecked);
+    if (declared_fields_unchecked_ready) {
         g_original_get_declared_fields_unchecked =
             reinterpret_cast<GetFieldsBoolFn>(field_methods[4].fnPtr);
         ++installed;
     }
+    note("Class.getDeclaredFieldsUnchecked", declared_fields_unchecked_ready);
 
     JNINativeMethod readlink_methods[] = {
         {"readlink", "(Ljava/lang/String;)Ljava/lang/String;",
          reinterpret_cast<void *>(hook_linux_readlink)},
     };
     api->hookJniNativeMethods(env, "libcore/io/Linux", readlink_methods, 1);
-    if (readlink_methods[0].fnPtr && readlink_methods[0].fnPtr !=
-                                        reinterpret_cast<void *>(hook_linux_readlink)) {
+    const bool linux_readlink_ready =
+        readlink_methods[0].fnPtr && readlink_methods[0].fnPtr !=
+                                         reinterpret_cast<void *>(hook_linux_readlink);
+    if (linux_readlink_ready) {
         g_original_linux_readlink = reinterpret_cast<ReadlinkStringFn>(readlink_methods[0].fnPtr);
         ++installed;
     }
+    note("Linux.readlink", linux_readlink_ready);
 
     JNINativeMethod nio_readlink_methods[] = {
         {"readlink0", "(J)[B", reinterpret_cast<void *>(hook_readlink0)},
     };
     api->hookJniNativeMethods(env, "sun/nio/fs/UnixNativeDispatcher", nio_readlink_methods, 1);
-    if (nio_readlink_methods[0].fnPtr && nio_readlink_methods[0].fnPtr !=
-                                            reinterpret_cast<void *>(hook_readlink0)) {
+    const bool nio_readlink_ready =
+        nio_readlink_methods[0].fnPtr && nio_readlink_methods[0].fnPtr !=
+                                             reinterpret_cast<void *>(hook_readlink0);
+    if (nio_readlink_ready) {
         g_original_readlink0 = reinterpret_cast<ReadlinkBytesFn>(nio_readlink_methods[0].fnPtr);
         ++installed;
     }
+    note("UnixNativeDispatcher.readlink0", nio_readlink_ready);
 
     if (installed == 0) {
         log_error("path hooks unavailable; Lineage file fingerprints stay visible");
@@ -391,31 +418,4 @@ bool install_path_hooks(JNIEnv *env, zygisk::Api *api) {
     log_info("path hooks installed (%d/8); ROM file names, readlink targets and %s hidden",
              installed, kHiddenField);
     return true;
-}
-
-void close_leaked_rom_fds() {
-    DIR *dir = opendir("/proc/self/fd");
-    if (!dir) return;
-    const int dir_fd = dirfd(dir);
-    int closed = 0;
-    struct dirent *entry = nullptr;
-    while ((entry = readdir(dir)) != nullptr) {
-        const char *name = entry->d_name;
-        if (!name || name[0] < '0' || name[0] > '9') continue;
-        char *end = nullptr;
-        const long fd = std::strtol(name, &end, 10);
-        if (!end || *end != '\0' || fd < 0) continue;
-        if (static_cast<int>(fd) == dir_fd) continue;
-        char target[PATH_MAX + 1]{};
-        const ssize_t length = readlinkat(dir_fd, name, target, PATH_MAX);
-        if (length <= 0 || length > PATH_MAX) continue;
-        target[length] = '\0';
-        if (!contains_rom_keyword(std::string(target, static_cast<size_t>(length)))) continue;
-        if (close(static_cast<int>(fd)) == 0) {
-            ++closed;
-            log_info("closed leaked ROM fd %ld (%s)", fd, target);
-        }
-    }
-    closedir(dir);
-    if (closed > 0) log_info("closed %d leaked ROM file descriptor(s)", closed);
 }
